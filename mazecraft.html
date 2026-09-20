@@ -1,0 +1,1892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mazecraft</title>
+<style>
+  :root{
+    --ink:#0a0c10;
+    --panel:rgba(16,19,25,.93);
+    --edge:#272d37;
+    --edge-soft:#1b2028;
+    --text:#dfe4ec;
+    --muted:#828d9e;
+    --torch:#ffa84c;
+    --exit:#6fe8d8;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--ink);color:var(--text);
+    font-family:"Segoe UI",Inter,Roboto,-apple-system,system-ui,sans-serif;
+    overflow:hidden;-webkit-font-smoothing:antialiased}
+  canvas#gl{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+
+  /* ---------- panel ---------- */
+  #panel{position:fixed;top:14px;left:14px;width:312px;max-height:calc(100vh - 28px);
+    overflow-y:auto;background:var(--panel);border:1px solid var(--edge);
+    border-radius:10px;padding:14px 14px 16px;z-index:10;backdrop-filter:blur(8px);
+    transition:opacity .25s}
+  #panel.dim{opacity:.30;pointer-events:none}
+  #panel.hidden{display:none}
+  #panel::-webkit-scrollbar{width:8px}
+  #panel::-webkit-scrollbar-thumb{background:#2d343f;border-radius:4px}
+  .title{display:flex;align-items:baseline;gap:8px;margin:0 0 2px}
+  .title h1{font-size:19px;font-weight:650;letter-spacing:.2px;margin:0}
+  .title span{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .tagline{font-size:12px;color:var(--muted);margin:0 0 14px;line-height:1.45}
+
+  .group{border-top:1px solid var(--edge-soft);padding-top:12px;margin-top:12px}
+  .group:first-of-type{border-top:0;padding-top:0;margin-top:0}
+  .glabel{font-size:12px;font-weight:600;color:#aeb8c6;margin:0 0 9px}
+
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+  .row label{font-size:12px;color:var(--muted)}
+  .val{font-size:11px;color:#9aa5b5;font-family:ui-monospace,"SF Mono",Menlo,monospace;
+    font-variant-numeric:tabular-nums}
+
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:18px;background:transparent;margin:0}
+  input[type=range]::-webkit-slider-runnable-track{height:3px;background:#2e3541;border-radius:2px}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;margin-top:-5px;
+    border-radius:50%;background:var(--torch);border:0;cursor:pointer}
+  input[type=range]::-moz-range-track{height:3px;background:#2e3541;border-radius:2px}
+  input[type=range]::-moz-range-thumb{width:13px;height:13px;border:0;border-radius:50%;background:var(--torch);cursor:pointer}
+
+  input[type=number]{width:104px;background:#0e1116;border:1px solid var(--edge);color:var(--text);
+    border-radius:6px;padding:5px 7px;font-size:12px;font-family:ui-monospace,Menlo,monospace}
+  input[type=number]:focus,button:focus-visible,input[type=range]:focus-visible{outline:2px solid var(--torch);outline-offset:1px}
+
+  button{font-family:inherit;cursor:pointer}
+  .btn{background:#191e26;border:1px solid var(--edge);color:var(--text);border-radius:6px;
+    padding:7px 10px;font-size:12px}
+  .btn:hover{background:#222833;border-color:#39424f}
+  .btn.primary{background:var(--torch);border-color:var(--torch);color:#1a1005;font-weight:640}
+  .btn.primary:hover{background:#ffb763}
+  .seg{display:flex;gap:6px}
+  .seg .btn{flex:1;text-align:center}
+  .seg .btn.on{background:#28313d;border-color:#4b566a;color:#fff}
+
+  .dims{font-size:12px;color:var(--text);font-family:ui-monospace,Menlo,monospace;
+    font-variant-numeric:tabular-nums}
+  .sub{font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;margin-top:2px}
+
+  /* block slots + palette */
+  #slots{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+  .slot{display:flex;align-items:center;gap:7px;background:#12161d;border:1px solid var(--edge);
+    border-radius:7px;padding:5px 6px;text-align:left;color:var(--muted);font-size:11px;line-height:1.25}
+  .slot.on{border-color:var(--torch);background:#1c1a16;color:var(--text)}
+  .slot canvas{border-radius:3px;image-rendering:pixelated;flex:none;box-shadow:0 0 0 1px #0007 inset}
+  .slot em{display:block;font-style:normal;color:#ffffffb0;font-size:10.5px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:92px}
+  .slot.on em{color:var(--torch)}
+  #palette{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .pal{padding:0;border:1px solid transparent;border-radius:4px;background:none;line-height:0}
+  .pal canvas{image-rendering:pixelated;display:block;border-radius:3px;width:100%;height:auto}
+  .pal:hover{border-color:#5a6577}
+  .pal.on{border-color:var(--torch);box-shadow:0 0 0 2px #ffa84c33}
+
+  .check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-bottom:7px;cursor:pointer}
+  .check input{accent-color:var(--torch);width:14px;height:14px;cursor:pointer}
+  #stats{font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;margin-top:10px}
+
+  /* ---------- hud ---------- */
+  #hud{position:fixed;left:16px;bottom:14px;z-index:8;pointer-events:none;
+    font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11.5px;
+    font-variant-numeric:tabular-nums;color:#c3ccd9;text-shadow:0 1px 3px #000c}
+  #hud div{margin-top:3px}
+  #hud b{font-weight:400;color:var(--muted);display:inline-block;min-width:74px}
+  #hudDist{color:var(--exit)}
+
+  #corner{position:fixed;right:14px;top:14px;z-index:8;display:flex;flex-direction:column;
+    align-items:flex-end;gap:8px;pointer-events:none}
+  #minimap{width:190px;height:190px;border:1px solid var(--edge);border-radius:8px;
+    background:#0a0c10;image-rendering:pixelated;box-shadow:0 6px 22px #0008}
+  #mapY{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--muted);
+    margin-top:-4px}
+  #compass{width:76px;height:76px}
+
+  #crosshair{position:fixed;left:50%;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;
+    z-index:7;pointer-events:none;opacity:.62}
+  #crosshair:before,#crosshair:after{content:"";position:absolute;background:#fff;
+    box-shadow:0 0 2px #000}
+  #crosshair:before{left:6px;top:0;width:2px;height:14px}
+  #crosshair:after{top:6px;left:0;height:2px;width:14px}
+
+  /* ---------- overlay ---------- */
+  #overlay{position:fixed;inset:0;z-index:6;display:flex;align-items:center;justify-content:center;
+    pointer-events:none;background:radial-gradient(60% 60% at 50% 45%,#0000 0%,#000a 100%)}
+  .ov-card{max-width:430px;text-align:center;padding:26px 30px}
+  .ov-card h1{font-size:40px;letter-spacing:-.6px;margin:0 0 6px;font-weight:680}
+  .ov-card p{color:#aab3c1;font-size:13.5px;line-height:1.6;margin:0 0 18px}
+  .ov-card .bad{color:#ff8a7a}
+  .keys{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:12px;
+    color:#939dac;text-align:left;margin:0 auto;max-width:300px}
+  .keys kbd{font-family:ui-monospace,Menlo,monospace;background:#171c24;border:1px solid var(--edge);
+    border-bottom-width:2px;border-radius:4px;padding:1px 6px;font-size:11px;color:#cfd6e1;
+    white-space:nowrap}
+  .enter{margin:20px 0 0;font-size:13px;color:var(--torch);font-weight:600}
+
+  /* ---------- progress + banner ---------- */
+  #progress{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;
+    flex-direction:column;gap:12px;background:#090b0ef2}
+  #ptrack{width:260px;height:3px;background:#242a34;border-radius:2px;overflow:hidden}
+  #pbar{height:100%;width:0;background:var(--torch);transition:width .12s linear}
+  #ptext{font-size:12px;color:var(--muted);font-family:ui-monospace,Menlo,monospace}
+
+  #banner{position:fixed;left:50%;top:22%;transform:translateX(-50%);z-index:15;display:none;
+    background:#10161bf2;border:1px solid var(--exit);border-radius:10px;padding:16px 26px;
+    text-align:center;font-size:19px;font-weight:640;color:var(--exit);box-shadow:0 10px 40px #000a}
+  #banner em{display:block;font-style:normal;font-size:12px;font-weight:400;color:#9fb0b4;
+    margin-top:6px;font-family:ui-monospace,Menlo,monospace}
+
+  #paneltoggle{position:fixed;top:14px;left:14px;z-index:11;display:none}
+
+  @media (max-width:820px){
+    #panel{width:min(86vw,320px)}
+    #corner{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<canvas id="gl"></canvas>
+
+<div id="crosshair"></div>
+
+<div id="corner">
+  <canvas id="minimap" width="190" height="190"></canvas>
+  <div id="mapY">y = 0</div>
+  <canvas id="compass" width="76" height="76"></canvas>
+</div>
+
+<div id="hud">
+  <div><b>position</b><span id="hudPos">0, 0, 0</span></div>
+  <div><b>to the exit</b><span id="hudDist">—</span></div>
+  <div><b>time</b><span id="hudTime">0:00.0</span></div>
+  <div><b>render</b><span id="hudFps">0 fps</span></div>
+</div>
+
+<div id="overlay">
+  <div class="ov-card">
+    <h1>Mazecraft</h1>
+    <p>A solid cube of blocks with one way in and one way out. Fly the corridors and find the far corner.</p>
+    <div class="keys">
+      <kbd>W A S D</kbd><span>move</span>
+      <kbd>Space / Shift</kbd><span>rise and sink</span>
+      <kbd>Ctrl</kbd><span>sprint</span>
+      <kbd>mouse</kbd><span>look</span>
+      <kbd>G</kbd><span>show the shortest route</span>
+      <kbd>M</kbd><span>minimap</span>
+      <kbd>R</kbd><span>back to the entrance</span>
+      <kbd>Tab</kbd><span>hide the controls</span>
+      <kbd>Esc</kbd><span>release the mouse</span>
+    </div>
+    <p class="enter">Click anywhere to take control</p>
+  </div>
+</div>
+
+<div id="banner"></div>
+
+<div id="progress">
+  <div id="ptrack"><div id="pbar"></div></div>
+  <div id="ptext">Carving passages…</div>
+</div>
+
+<div id="panel">
+  <div class="title"><h1>Mazecraft</h1><span id="ver"></span></div>
+  <p class="tagline">Generate a sealed block maze, pick what it is built from, then fly it.</p>
+
+  <div class="group">
+    <div class="glabel">Maze</div>
+    <div class="row">
+      <label for="seed">Seed</label>
+      <span style="display:flex;gap:6px">
+        <input type="number" id="seed" step="1">
+        <button class="btn" id="reseed" title="New random seed and regenerate">↻</button>
+      </span>
+    </div>
+    <div class="row"><label>Corridor width</label></div>
+    <div class="seg" style="margin-bottom:10px">
+      <button class="btn" id="corr1">1 block</button>
+      <button class="btn" id="corr2">2 blocks</button>
+    </div>
+    <div class="row"><label for="cells">Size</label><span class="val" id="cellsOut"></span></div>
+    <input type="range" id="cells" min="20" max="34" step="1">
+    <div class="dims" id="dims">61 × 61 × 61 blocks</div>
+    <div class="sub">one entrance, one exit, diagonally opposite</div>
+    <div class="row" style="margin-top:12px"><label for="braid">Loops</label><span class="val" id="braidOut"></span></div>
+    <input type="range" id="braid" min="0" max="0.35" step="0.01">
+    <button class="btn primary" id="generate" style="width:100%;margin-top:12px">Build the maze</button>
+    <div id="stats"></div>
+  </div>
+
+  <div class="group">
+    <div class="glabel">Blocks</div>
+    <div id="slots"></div>
+    <div id="palette"></div>
+  </div>
+
+  <div class="group">
+    <div class="glabel">Light</div>
+    <div class="row"><label for="torch">Torch reach</label><span class="val" id="torchOut"></span></div>
+    <input type="range" id="torch" min="4" max="48" step="1">
+    <div class="row" style="margin-top:8px"><label for="ambient">Ambient</label><span class="val" id="ambientOut"></span></div>
+    <input type="range" id="ambient" min="0" max="0.7" step="0.01">
+    <div class="row" style="margin-top:8px"><label for="fog">View distance</label><span class="val" id="fogOut"></span></div>
+    <input type="range" id="fog" min="8" max="90" step="1">
+    <div class="row" style="margin-top:8px"><label for="beacon">Exit glow</label><span class="val" id="beaconOut"></span></div>
+    <input type="range" id="beacon" min="0" max="2" step="0.05">
+  </div>
+
+  <div class="group">
+    <div class="glabel">Play</div>
+    <div class="row"><label for="speed">Flight speed</label><span class="val" id="speedOut"></span></div>
+    <input type="range" id="speed" min="2" max="24" step="0.5">
+    <label class="check" style="margin-top:10px"><input type="checkbox" id="tglPath"> Show the shortest route</label>
+    <label class="check"><input type="checkbox" id="tglMap" checked> Show the minimap</label>
+    <div class="seg" style="margin-top:8px">
+      <button class="btn" id="respawn">Back to entrance</button>
+      <button class="btn" id="shot">Save a PNG</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---- 10-core.js ---- */
+/* ============================================================
+   Mazecraft — core math / rng
+   ============================================================ */
+var MZ_VERSION = '1.0.0';
+
+function mulberry32(a) {
+  a = a | 0;
+  return function () {
+    a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function hash2(a, b) {
+  var t = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+  return t - Math.floor(t);
+}
+
+function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+/* ---------- mat4 (column major, WebGL order) ---------- */
+function m4identity(o) {
+  o[0] = 1; o[1] = 0; o[2] = 0; o[3] = 0;
+  o[4] = 0; o[5] = 1; o[6] = 0; o[7] = 0;
+  o[8] = 0; o[9] = 0; o[10] = 1; o[11] = 0;
+  o[12] = 0; o[13] = 0; o[14] = 0; o[15] = 1;
+  return o;
+}
+
+function m4perspective(o, fovy, aspect, near, far) {
+  var f = 1.0 / Math.tan(fovy * 0.5), nf = 1 / (near - far);
+  o[0] = f / aspect; o[1] = 0; o[2] = 0; o[3] = 0;
+  o[4] = 0; o[5] = f; o[6] = 0; o[7] = 0;
+  o[8] = 0; o[9] = 0; o[10] = (far + near) * nf; o[11] = -1;
+  o[12] = 0; o[13] = 0; o[14] = 2 * far * near * nf; o[15] = 0;
+  return o;
+}
+
+function m4mul(o, a, b) {
+  var a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3],
+      a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7],
+      a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11],
+      a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+  for (var i = 0; i < 4; i++) {
+    var b0 = b[i * 4], b1 = b[i * 4 + 1], b2 = b[i * 4 + 2], b3 = b[i * 4 + 3];
+    o[i * 4]     = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    o[i * 4 + 1] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    o[i * 4 + 2] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    o[i * 4 + 3] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+  }
+  return o;
+}
+
+function v3norm(v) {
+  var l = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) || 1;
+  v[0] /= l; v[1] /= l; v[2] /= l; return v;
+}
+function v3cross(a, b, o) {
+  var x = a[1] * b[2] - a[2] * b[1];
+  var y = a[2] * b[0] - a[0] * b[2];
+  var z = a[0] * b[1] - a[1] * b[0];
+  o[0] = x; o[1] = y; o[2] = z; return o;
+}
+function v3dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+
+/* view matrix from eye + orthonormal basis (right, up, forward) */
+function m4view(o, eye, r, u, f) {
+  o[0] = r[0]; o[4] = r[1]; o[8] = r[2];  o[12] = -v3dot(r, eye);
+  o[1] = u[0]; o[5] = u[1]; o[9] = u[2];  o[13] = -v3dot(u, eye);
+  o[2] = -f[0]; o[6] = -f[1]; o[10] = -f[2]; o[14] = v3dot(f, eye);
+  o[3] = 0; o[7] = 0; o[11] = 0; o[15] = 1;
+  return o;
+}
+
+/* ---------- frustum ---------- */
+function extractPlanes(m, p) {
+  var r00 = m[0], r01 = m[4], r02 = m[8], r03 = m[12];
+  var r10 = m[1], r11 = m[5], r12 = m[9], r13 = m[13];
+  var r20 = m[2], r21 = m[6], r22 = m[10], r23 = m[14];
+  var r30 = m[3], r31 = m[7], r32 = m[11], r33 = m[15];
+  var rows = [
+    [r30 + r00, r31 + r01, r32 + r02, r33 + r03],
+    [r30 - r00, r31 - r01, r32 - r02, r33 - r03],
+    [r30 + r10, r31 + r11, r32 + r12, r33 + r13],
+    [r30 - r10, r31 - r11, r32 - r12, r33 - r13],
+    [r30 + r20, r31 + r21, r32 + r22, r33 + r23],
+    [r30 - r20, r31 - r21, r32 - r22, r33 - r23]
+  ];
+  for (var i = 0; i < 6; i++) {
+    var a = rows[i][0], b = rows[i][1], c = rows[i][2], d = rows[i][3];
+    var l = Math.sqrt(a * a + b * b + c * c) || 1;
+    p[i * 4] = a / l; p[i * 4 + 1] = b / l; p[i * 4 + 2] = c / l; p[i * 4 + 3] = d / l;
+  }
+  return p;
+}
+
+function aabbInFrustum(p, x0, y0, z0, x1, y1, z1) {
+  for (var i = 0; i < 6; i++) {
+    var a = p[i * 4], b = p[i * 4 + 1], c = p[i * 4 + 2], d = p[i * 4 + 3];
+    var vx = a > 0 ? x1 : x0, vy = b > 0 ? y1 : y0, vz = c > 0 ? z1 : z0;
+    if (a * vx + b * vy + c * vz + d < 0) return false;
+  }
+  return true;
+}
+
+
+/* ---- 20-textures.js ---- */
+/* ============================================================
+   Mazecraft — procedural 16x16 block textures (no assets)
+   ============================================================ */
+var TEX_SIZE = 16;
+
+function TexBuf(s) {
+  this.s = s;
+  this.d = new Uint8ClampedArray(s * s * 4);
+  for (var i = 3; i < this.d.length; i += 4) this.d[i] = 255;
+}
+TexBuf.prototype.i = function (x, y) {
+  var s = this.s;
+  x = ((x % s) + s) % s; y = ((y % s) + s) % s;
+  return (y * s + x) * 4;
+};
+TexBuf.prototype.set = function (x, y, r, g, b) {
+  var i = this.i(x, y);
+  this.d[i] = r; this.d[i + 1] = g; this.d[i + 2] = b; this.d[i + 3] = 255;
+};
+TexBuf.prototype.mul = function (x, y, f) {
+  var i = this.i(x, y);
+  this.d[i] *= f; this.d[i + 1] *= f; this.d[i + 2] *= f;
+};
+TexBuf.prototype.add = function (x, y, r, g, b) {
+  var i = this.i(x, y);
+  this.d[i] += r; this.d[i + 1] += g; this.d[i + 2] += b;
+};
+TexBuf.prototype.mix = function (x, y, c, t) {
+  var i = this.i(x, y);
+  this.d[i] = this.d[i] + (c[0] - this.d[i]) * t;
+  this.d[i + 1] = this.d[i + 1] + (c[1] - this.d[i + 1]) * t;
+  this.d[i + 2] = this.d[i + 2] + (c[2] - this.d[i + 2]) * t;
+};
+TexBuf.prototype.fill = function (c) {
+  for (var y = 0; y < this.s; y++) for (var x = 0; x < this.s; x++) this.set(x, y, c[0], c[1], c[2]);
+};
+
+function grainPass(T, rnd, amt) {
+  for (var y = 0; y < T.s; y++) for (var x = 0; x < T.s; x++) {
+    T.mul(x, y, 1 + (rnd() - 0.5) * amt);
+  }
+}
+
+/* ---- pattern painters ---- */
+function pat_brick(T, d, rnd) {
+  var bw = d.bw || 8, bh = d.bh || 8, off = d.offset === undefined ? true : d.offset;
+  for (var y = 0; y < 16; y++) {
+    var row = Math.floor(y / bh);
+    var xo = off ? (row % 2) * (bw >> 1) : 0;
+    for (var x = 0; x < 16; x++) {
+      var gx = x + xo;
+      var lx = ((gx % bw) + bw) % bw, ly = y % bh;
+      if (lx === 0 || ly === 0) {
+        T.set(x, y, d.mortar[0], d.mortar[1], d.mortar[2]);
+      } else {
+        var id = row * 37 + Math.floor(gx / bw) * 11;
+        var j = (hash2(id, row) - 0.5) * (d.jitter === undefined ? 0.16 : d.jitter);
+        var f = 1 + j;
+        T.set(x, y, d.base[0] * f, d.base[1] * f, d.base[2] * f);
+        if (lx === bw - 1 || ly === bh - 1) T.mul(x, y, 0.9);
+        if (lx === 1 || ly === 1) T.mul(x, y, 1.06);
+      }
+    }
+  }
+  grainPass(T, rnd, d.grain === undefined ? 0.12 : d.grain);
+}
+
+function pat_cobble(T, d, rnd) {
+  var n = d.cells || 9, px = [], py = [], pc = [];
+  for (var k = 0; k < n; k++) {
+    px.push(rnd() * 16); py.push(rnd() * 16);
+    var f = 0.78 + rnd() * 0.44;
+    pc.push([d.base[0] * f, d.base[1] * f, d.base[2] * f]);
+  }
+  for (var y = 0; y < 16; y++) for (var x = 0; x < 16; x++) {
+    var b1 = 1e9, b2 = 1e9, bi = 0;
+    for (var k2 = 0; k2 < n; k2++) {
+      var dx = Math.abs(x + 0.5 - px[k2]); if (dx > 8) dx = 16 - dx;
+      var dy = Math.abs(y + 0.5 - py[k2]); if (dy > 8) dy = 16 - dy;
+      var dd = dx * dx + dy * dy;
+      if (dd < b1) { b2 = b1; b1 = dd; bi = k2; } else if (dd < b2) b2 = dd;
+    }
+    var c = pc[bi];
+    T.set(x, y, c[0], c[1], c[2]);
+    var edge = Math.sqrt(b2) - Math.sqrt(b1);
+    if (edge < 0.85) T.mix(x, y, d.mortar, 0.85 - edge > 1 ? 1 : (0.85 - edge));
+  }
+  grainPass(T, rnd, d.grain === undefined ? 0.18 : d.grain);
+}
+
+function pat_planks(T, d, rnd) {
+  var ph = d.ph || 4;
+  for (var y = 0; y < 16; y++) {
+    var p = Math.floor(y / ph);
+    var f = 0.88 + hash2(p * 5.3, 2.1) * 0.24;
+    var seam = (p * 7 + 3) % 16;
+    for (var x = 0; x < 16; x++) {
+      var g = 1 + (hash2(x * 1.7 + p * 13.0, y * 0.4) - 0.5) * 0.18;
+      var streak = Math.sin((x * 0.9 + p * 4.0)) * 0.05;
+      var m = f * g * (1 + streak);
+      T.set(x, y, d.base[0] * m, d.base[1] * m, d.base[2] * m);
+      if (y % ph === 0) T.mix(x, y, d.mortar, 0.75);
+      if (x === seam) T.mix(x, y, d.mortar, 0.6);
+    }
+  }
+  grainPass(T, rnd, 0.07);
+}
+
+function pat_rough(T, d, rnd) {
+  T.fill(d.base);
+  var blobs = d.blobs || 14;
+  for (var k = 0; k < blobs; k++) {
+    var bx = rnd() * 16, by = rnd() * 16, br = 1.2 + rnd() * 2.4;
+    var f = 0.76 + rnd() * 0.5;
+    for (var y = 0; y < 16; y++) for (var x = 0; x < 16; x++) {
+      var dx = Math.abs(x - bx); if (dx > 8) dx = 16 - dx;
+      var dy = Math.abs(y - by); if (dy > 8) dy = 16 - dy;
+      if (dx * dx + dy * dy < br * br) T.mul(x, y, f);
+    }
+  }
+  if (d.accent) {
+    for (var k2 = 0; k2 < (d.speck || 18); k2++) {
+      T.mix(Math.floor(rnd() * 16), Math.floor(rnd() * 16), d.accent, 0.35 + rnd() * 0.5);
+    }
+  }
+  grainPass(T, rnd, d.grain === undefined ? 0.16 : d.grain);
+}
+
+function pat_smooth(T, d, rnd) {
+  T.fill(d.base);
+  grainPass(T, rnd, d.grain === undefined ? 0.08 : d.grain);
+  if (d.accent) {
+    for (var k = 0; k < (d.speck || 6); k++) {
+      T.mix(Math.floor(rnd() * 16), Math.floor(rnd() * 16), d.accent, 0.4 + rnd() * 0.6);
+    }
+  }
+}
+
+function pat_sand(T, d, rnd) {
+  for (var y = 0; y < 16; y++) {
+    var f = 0.9 + hash2(y * 3.1, 7.7) * 0.2;
+    for (var x = 0; x < 16; x++) {
+      var g = 1 + (hash2(x * 2.3, y * 5.1) - 0.5) * 0.14;
+      T.set(x, y, d.base[0] * f * g, d.base[1] * f * g, d.base[2] * f * g);
+    }
+  }
+  for (var b = 0; b < 3; b++) {
+    var yy = Math.floor(rnd() * 16);
+    for (var x2 = 0; x2 < 16; x2++) T.mul(x2, yy, 0.86);
+  }
+  grainPass(T, rnd, 0.08);
+}
+
+function pat_crystal(T, d, rnd) {
+  for (var y = 0; y < 16; y++) for (var x = 0; x < 16; x++) {
+    var v = Math.sin((x + y) * 0.9) * 0.5 + Math.sin((x - y * 1.7) * 0.6) * 0.5;
+    var f = 0.78 + (v * 0.5 + 0.5) * 0.5;
+    T.set(x, y, d.base[0] * f, d.base[1] * f, d.base[2] * f);
+  }
+  var shards = d.shards || 5;
+  for (var k = 0; k < shards; k++) {
+    var x0 = Math.floor(rnd() * 16), y0 = Math.floor(rnd() * 16), len = 3 + Math.floor(rnd() * 6);
+    var dx = rnd() < 0.5 ? 1 : -1;
+    for (var i = 0; i < len; i++) {
+      T.mix(x0 + i * dx, y0 + i, d.accent || [255, 255, 255], 0.55);
+    }
+  }
+  grainPass(T, rnd, 0.1);
+}
+
+function pat_glow(T, d, rnd) {
+  T.fill(d.base);
+  for (var k = 0; k < (d.nodes || 10); k++) {
+    var bx = Math.floor(rnd() * 16), by = Math.floor(rnd() * 16);
+    var r = 1 + Math.floor(rnd() * 2);
+    for (var y = -r; y <= r; y++) for (var x = -r; x <= r; x++) {
+      if (x * x + y * y > r * r + 0.2) continue;
+      var t = 1 - Math.sqrt(x * x + y * y) / (r + 1);
+      T.mix(bx + x, by + y, d.accent, 0.35 + t * 0.6);
+    }
+  }
+  for (var k2 = 0; k2 < (d.dark || 10); k2++) {
+    T.mul(Math.floor(rnd() * 16), Math.floor(rnd() * 16), 0.7);
+  }
+  grainPass(T, rnd, 0.1);
+}
+
+function pat_ice(T, d, rnd) {
+  for (var y = 0; y < 16; y++) for (var x = 0; x < 16; x++) {
+    var f = 0.9 + (Math.sin(x * 0.7) + Math.cos(y * 0.5)) * 0.05 + (rnd() - 0.5) * 0.06;
+    T.set(x, y, d.base[0] * f, d.base[1] * f, d.base[2] * f);
+  }
+  for (var k = 0; k < 4; k++) {
+    var x0 = Math.floor(rnd() * 16), y0 = Math.floor(rnd() * 16);
+    for (var i = 0; i < 9; i++) {
+      T.mix(x0, y0, d.accent || [255, 255, 255], 0.4);
+      if (rnd() < 0.6) x0 += rnd() < 0.5 ? 1 : -1;
+      y0 += 1;
+    }
+  }
+}
+
+var PATTERNS = {
+  brick: pat_brick, cobble: pat_cobble, planks: pat_planks, rough: pat_rough,
+  smooth: pat_smooth, sand: pat_sand, crystal: pat_crystal, glow: pat_glow, ice: pat_ice
+};
+
+/* ---- block library ---- */
+var BLOCKS = [
+  { key: 'stone_bricks', name: 'Stone Bricks', pattern: 'brick', base: [128, 128, 122], mortar: [92, 92, 88], bw: 8, bh: 8, offset: false, em: 0 },
+  { key: 'mossy_bricks', name: 'Mossy Stone Bricks', pattern: 'brick', base: [118, 128, 108], mortar: [78, 92, 72], bw: 8, bh: 8, offset: false, moss: true, em: 0 },
+  { key: 'cracked_bricks', name: 'Cracked Bricks', pattern: 'brick', base: [122, 120, 114], mortar: [80, 78, 74], bw: 8, bh: 8, offset: false, crack: true, em: 0 },
+  { key: 'chiseled_stone', name: 'Chiseled Stone', pattern: 'brick', base: [134, 134, 128], mortar: [86, 86, 82], bw: 16, bh: 8, offset: false, em: 0 },
+  { key: 'cobblestone', name: 'Cobblestone', pattern: 'cobble', base: [126, 126, 126], mortar: [74, 74, 74], cells: 10, em: 0 },
+  { key: 'mossy_cobble', name: 'Mossy Cobblestone', pattern: 'cobble', base: [112, 126, 104], mortar: [64, 80, 58], cells: 10, em: 0 },
+  { key: 'deepslate', name: 'Deepslate Tiles', pattern: 'brick', base: [58, 58, 62], mortar: [36, 36, 40], bw: 8, bh: 8, offset: false, em: 0 },
+  { key: 'andesite', name: 'Andesite', pattern: 'rough', base: [136, 136, 138], blobs: 16, em: 0 },
+  { key: 'blackstone', name: 'Blackstone', pattern: 'rough', base: [48, 44, 50], blobs: 16, accent: [80, 74, 84], em: 0 },
+  { key: 'oak_planks', name: 'Oak Planks', pattern: 'planks', base: [162, 130, 78], mortar: [108, 84, 46], ph: 4, em: 0 },
+  { key: 'dark_oak', name: 'Dark Oak Planks', pattern: 'planks', base: [84, 56, 28], mortar: [52, 34, 16], ph: 4, em: 0 },
+  { key: 'spruce_planks', name: 'Spruce Planks', pattern: 'planks', base: [116, 88, 52], mortar: [74, 54, 30], ph: 4, em: 0 },
+  { key: 'crimson_planks', name: 'Crimson Planks', pattern: 'planks', base: [102, 50, 72], mortar: [66, 30, 48], ph: 4, em: 0 },
+  { key: 'nether_bricks', name: 'Nether Bricks', pattern: 'brick', base: [56, 26, 32], mortar: [32, 14, 18], bw: 8, bh: 4, offset: true, em: 0 },
+  { key: 'red_bricks', name: 'Bricks', pattern: 'brick', base: [150, 88, 72], mortar: [162, 152, 146], bw: 8, bh: 4, offset: true, em: 0 },
+  { key: 'mud_bricks', name: 'Mud Bricks', pattern: 'brick', base: [138, 110, 86], mortar: [96, 74, 56], bw: 8, bh: 4, offset: true, em: 0 },
+  { key: 'sandstone', name: 'Sandstone', pattern: 'sand', base: [214, 202, 154], em: 0 },
+  { key: 'red_sandstone', name: 'Red Sandstone', pattern: 'sand', base: [186, 110, 58], em: 0 },
+  { key: 'quartz', name: 'Quartz Block', pattern: 'smooth', base: [232, 228, 220], accent: [208, 202, 192], speck: 10, em: 0 },
+  { key: 'obsidian', name: 'Obsidian', pattern: 'smooth', base: [26, 20, 40], accent: [92, 66, 140], speck: 12, grain: 0.22, em: 0 },
+  { key: 'prismarine', name: 'Prismarine', pattern: 'rough', base: [96, 156, 146], blobs: 12, accent: [138, 200, 186], em: 0 },
+  { key: 'dark_prismarine', name: 'Dark Prismarine', pattern: 'rough', base: [50, 86, 72], blobs: 12, accent: [78, 124, 104], em: 0 },
+  { key: 'purpur', name: 'Purpur Block', pattern: 'rough', base: [150, 108, 150], blobs: 14, accent: [186, 146, 186], em: 0 },
+  { key: 'end_bricks', name: 'End Stone Bricks', pattern: 'brick', base: [218, 222, 160], mortar: [178, 182, 122], bw: 8, bh: 8, offset: false, em: 0 },
+  { key: 'packed_ice', name: 'Packed Ice', pattern: 'ice', base: [150, 186, 232], accent: [216, 236, 255], em: 0 },
+  { key: 'gold_block', name: 'Block of Gold', pattern: 'smooth', base: [236, 200, 78], accent: [255, 236, 150], speck: 14, grain: 0.12, em: 0 },
+  { key: 'emerald_block', name: 'Block of Emerald', pattern: 'crystal', base: [56, 190, 110], accent: [150, 255, 190], shards: 6, em: 0.25 },
+  { key: 'diamond_block', name: 'Block of Diamond', pattern: 'crystal', base: [110, 220, 216], accent: [214, 255, 252], shards: 6, em: 0.25 },
+  { key: 'lapis_block', name: 'Block of Lapis', pattern: 'rough', base: [40, 80, 168], blobs: 14, accent: [110, 150, 220], em: 0 },
+  { key: 'amethyst', name: 'Amethyst Block', pattern: 'crystal', base: [140, 100, 200], accent: [212, 178, 255], shards: 7, em: 0.3 },
+  { key: 'glowstone', name: 'Glowstone', pattern: 'glow', base: [150, 108, 58], accent: [255, 226, 150], nodes: 11, em: 1.0 },
+  { key: 'sea_lantern', name: 'Sea Lantern', pattern: 'glow', base: [156, 196, 190], accent: [226, 252, 248], nodes: 9, dark: 4, em: 1.0 },
+  { key: 'shroomlight', name: 'Shroomlight', pattern: 'glow', base: [200, 118, 44], accent: [255, 214, 120], nodes: 10, em: 1.0 },
+  { key: 'redstone_lamp', name: 'Redstone Lamp', pattern: 'glow', base: [168, 92, 44], accent: [255, 180, 96], nodes: 8, em: 0.9 },
+  { key: 'magma', name: 'Magma Block', pattern: 'glow', base: [92, 40, 24], accent: [255, 138, 40], nodes: 12, em: 0.85 },
+  { key: 'bedrock', name: 'Bedrock', pattern: 'cobble', base: [84, 84, 86], mortar: [40, 40, 42], cells: 12, em: 0 }
+];
+
+var BLOCK_INDEX = {};
+(function () { for (var i = 0; i < BLOCKS.length; i++) BLOCK_INDEX[BLOCKS[i].key] = i; })();
+
+function makeBlockTexture(def) {
+  var T = new TexBuf(TEX_SIZE);
+  var seedStr = def.key;
+  var s = 0;
+  for (var i = 0; i < seedStr.length; i++) s = (s * 31 + seedStr.charCodeAt(i)) | 0;
+  var rnd = mulberry32(s || 12345);
+  (PATTERNS[def.pattern] || pat_smooth)(T, def, rnd);
+
+  if (def.moss) {
+    for (var k = 0; k < 40; k++) {
+      var x = Math.floor(rnd() * 16), y = Math.floor(rnd() * 16);
+      T.mix(x, y, [74, 108, 54], 0.3 + rnd() * 0.5);
+    }
+  }
+  if (def.crack) {
+    for (var c = 0; c < 3; c++) {
+      var cx = Math.floor(rnd() * 16), cy = Math.floor(rnd() * 16);
+      for (var i2 = 0; i2 < 6; i2++) {
+        T.mul(cx, cy, 0.62);
+        if (rnd() < 0.5) cx += rnd() < 0.5 ? 1 : -1; else cy += rnd() < 0.5 ? 1 : -1;
+      }
+    }
+  }
+  return T;
+}
+
+
+/* ---- 30-maze.js ---- */
+/* ============================================================
+   Mazecraft — 3D maze generation
+   Materials: 0 air, 1 wall, 2 shell, 3 entrance frame, 4 exit frame
+   ============================================================ */
+var MAT_AIR = 0, MAT_WALL = 1, MAT_SHELL = 2, MAT_ENTRY = 3, MAT_EXIT = 4;
+
+var DIRS = [
+  [1, 0, 0], [-1, 0, 0],
+  [0, 1, 0], [0, -1, 0],
+  [0, 0, 1], [0, 0, -1]
+];
+
+function buildMaze(opts) {
+  var C = opts.cells | 0;                 // cells per axis
+  var W = opts.corridor | 0;              // corridor width in blocks (1 or 2)
+  var P = W + 1;                          // cell pitch
+  var dim = C * P + 1;                    // blocks per axis
+  var rnd = mulberry32(opts.seed | 0);
+
+  var grid = new Uint8Array(dim * dim * dim);
+  grid.fill(MAT_WALL);
+
+  function gi(x, y, z) { return x + dim * (y + dim * z); }
+
+  function carveCell(cx, cy, cz) {
+    var bx = cx * P + 1, by = cy * P + 1, bz = cz * P + 1;
+    for (var z = 0; z < W; z++)
+      for (var y = 0; y < W; y++)
+        for (var x = 0; x < W; x++)
+          grid[gi(bx + x, by + y, bz + z)] = MAT_AIR;
+  }
+
+  function carveWall(cx, cy, cz, d) {
+    // wall plane between cell (cx,cy,cz) and its neighbour in direction d
+    var dir = DIRS[d];
+    var ax = dir[0] !== 0 ? 0 : (dir[1] !== 0 ? 1 : 2);
+    var base = [cx * P + 1, cy * P + 1, cz * P + 1];
+    var plane = [cx, cy, cz][ax] * P + (dir[ax] > 0 ? P : 0);
+    var u = (ax + 1) % 3, v = (ax + 2) % 3;
+    var p = [0, 0, 0];
+    for (var j = 0; j < W; j++) {
+      for (var i = 0; i < W; i++) {
+        p[ax] = plane; p[u] = base[u] + i; p[v] = base[v] + j;
+        grid[gi(p[0], p[1], p[2])] = MAT_AIR;
+      }
+    }
+  }
+
+  /* ---- recursive backtracker over the cell lattice ---- */
+  var nCells = C * C * C;
+  var visited = new Uint8Array(nCells);
+  var ci = function (x, y, z) { return x + C * (y + C * z); };
+  var stack = new Int32Array(nCells);
+  var sp = 0;
+  var order = [0, 1, 2, 3, 4, 5];
+
+  stack[sp++] = 0;
+  visited[0] = 1;
+  carveCell(0, 0, 0);
+  var carvedCells = 1;
+
+  while (sp > 0) {
+    var cur = stack[sp - 1];
+    var cx = cur % C, cy = ((cur / C) | 0) % C, cz = (cur / (C * C)) | 0;
+
+    // shuffle direction order
+    for (var k = 5; k > 0; k--) {
+      var r = (rnd() * (k + 1)) | 0;
+      var t = order[k]; order[k] = order[r]; order[r] = t;
+    }
+
+    var moved = false;
+    for (var q = 0; q < 6; q++) {
+      var d = order[q], dir = DIRS[d];
+      var nx = cx + dir[0], ny = cy + dir[1], nz = cz + dir[2];
+      if (nx < 0 || ny < 0 || nz < 0 || nx >= C || ny >= C || nz >= C) continue;
+      var n = ci(nx, ny, nz);
+      if (visited[n]) continue;
+      visited[n] = 1;
+      carveCell(nx, ny, nz);
+      carveWall(cx, cy, cz, d);
+      stack[sp++] = n;
+      carvedCells++;
+      moved = true;
+      break;
+    }
+    if (!moved) sp--;
+  }
+
+  /* ---- optional braiding: remove some dead ends to add loops ---- */
+  var braid = opts.braid || 0;
+  if (braid > 0) {
+    for (var cz2 = 0; cz2 < C; cz2++)
+      for (var cy2 = 0; cy2 < C; cy2++)
+        for (var cx2 = 0; cx2 < C; cx2++) {
+          if (rnd() > braid) continue;
+          // count open faces
+          var open = 0, closed = [];
+          for (var d2 = 0; d2 < 6; d2++) {
+            var dr = DIRS[d2];
+            var mx = cx2 + dr[0], my = cy2 + dr[1], mz = cz2 + dr[2];
+            if (mx < 0 || my < 0 || mz < 0 || mx >= C || my >= C || mz >= C) continue;
+            var ax2 = dr[0] !== 0 ? 0 : (dr[1] !== 0 ? 1 : 2);
+            var pl = [cx2, cy2, cz2][ax2] * P + (dr[ax2] > 0 ? P : 0);
+            var pp = [cx2 * P + 1, cy2 * P + 1, cz2 * P + 1];
+            pp[ax2] = pl;
+            if (grid[gi(pp[0], pp[1], pp[2])] === MAT_AIR) open++; else closed.push(d2);
+          }
+          if (open === 1 && closed.length) {
+            carveWall(cx2, cy2, cz2, closed[(rnd() * closed.length) | 0]);
+          }
+        }
+  }
+
+  /* ---- shell ---- */
+  for (var z = 0; z < dim; z++)
+    for (var y = 0; y < dim; y++)
+      for (var x = 0; x < dim; x++) {
+        if (x === 0 || y === 0 || z === 0 || x === dim - 1 || y === dim - 1 || z === dim - 1) {
+          var i2 = gi(x, y, z);
+          if (grid[i2] !== MAT_AIR) grid[i2] = MAT_SHELL;
+        }
+      }
+
+  /* ---- the two doors ---- */
+  function openDoor(planeX, cy, cz, mat) {
+    var by = cy * P + 1, bz = cz * P + 1;
+    var lo = -1, hi = W;
+    for (var j = lo; j <= hi; j++)
+      for (var i = lo; i <= hi; i++) {
+        var yy = by + j, zz = bz + i;
+        if (yy < 0 || zz < 0 || yy >= dim || zz >= dim) continue;
+        var inside = (j >= 0 && j < W && i >= 0 && i < W);
+        var id = gi(planeX, yy, zz);
+        if (inside) grid[id] = MAT_AIR;
+        else if (grid[id] !== MAT_AIR) grid[id] = mat;
+      }
+  }
+
+  var entryCell = [0, 0, 0];
+  var exitCell = [C - 1, C - 1, C - 1];
+  openDoor(0, entryCell[1], entryCell[2], MAT_ENTRY);
+  openDoor(dim - 1, exitCell[1], exitCell[2], MAT_EXIT);
+
+  var half = (W - 1) * 0.5;
+  var entryPos = [0.5, entryCell[1] * P + 1 + half + 0.5, entryCell[2] * P + 1 + half + 0.5];
+  var exitPos = [dim - 0.5, exitCell[1] * P + 1 + half + 0.5, exitCell[2] * P + 1 + half + 0.5];
+
+  return {
+    dim: dim, cells: C, corridor: W, pitch: P, grid: grid,
+    seed: opts.seed, carvedCells: carvedCells,
+    entryPos: entryPos, exitPos: exitPos,
+    entryBlock: [0, Math.floor(entryPos[1]), Math.floor(entryPos[2])],
+    exitBlock: [dim - 1, Math.floor(exitPos[1]), Math.floor(exitPos[2])]
+  };
+}
+
+/* ---- BFS from the exit: distance field + solution path ---- */
+function solveMaze(m) {
+  var dim = m.dim, grid = m.grid;
+  var n = dim * dim * dim;
+  var dist = new Int32Array(n);
+  dist.fill(-1);
+  var queue = new Int32Array(n);
+  var head = 0, tail = 0;
+
+  function gi(x, y, z) { return x + dim * (y + dim * z); }
+
+  var start = gi(m.exitBlock[0], m.exitBlock[1], m.exitBlock[2]);
+  dist[start] = 0;
+  queue[tail++] = start;
+
+  while (head < tail) {
+    var cur = queue[head++];
+    var x = cur % dim, y = ((cur / dim) | 0) % dim, z = (cur / (dim * dim)) | 0;
+    var dcur = dist[cur];
+    for (var d = 0; d < 6; d++) {
+      var dir = DIRS[d];
+      var nx = x + dir[0], ny = y + dir[1], nz = z + dir[2];
+      if (nx < 0 || ny < 0 || nz < 0 || nx >= dim || ny >= dim || nz >= dim) continue;
+      var ni = gi(nx, ny, nz);
+      if (grid[ni] !== MAT_AIR || dist[ni] >= 0) continue;
+      dist[ni] = dcur + 1;
+      queue[tail++] = ni;
+    }
+  }
+
+  // walk downhill from entrance to exit
+  var path = [];
+  var ex = m.entryBlock[0], ey = m.entryBlock[1], ez = m.entryBlock[2];
+  var cur2 = gi(ex, ey, ez);
+  var solvable = dist[cur2] >= 0;
+  if (solvable) {
+    var cx = ex, cy = ey, cz = ez, guard = 0;
+    while (dist[gi(cx, cy, cz)] > 0 && guard++ < n) {
+      path.push([cx + 0.5, cy + 0.5, cz + 0.5]);
+      var best = -1, bd = dist[gi(cx, cy, cz)];
+      for (var d2 = 0; d2 < 6; d2++) {
+        var dr = DIRS[d2];
+        var nx2 = cx + dr[0], ny2 = cy + dr[1], nz2 = cz + dr[2];
+        if (nx2 < 0 || ny2 < 0 || nz2 < 0 || nx2 >= dim || ny2 >= dim || nz2 >= dim) continue;
+        var dd = dist[gi(nx2, ny2, nz2)];
+        if (dd >= 0 && dd < bd) { bd = dd; best = d2; }
+      }
+      if (best < 0) break;
+      cx += DIRS[best][0]; cy += DIRS[best][1]; cz += DIRS[best][2];
+    }
+    path.push([cx + 0.5, cy + 0.5, cz + 0.5]);
+  }
+
+  return { dist: dist, path: path, length: path.length, solvable: solvable };
+}
+
+
+/* ---- 40-mesher.js ---- */
+/* ============================================================
+   Mazecraft — greedy voxel mesher
+   Emits merged, texture-repeating quads for every solid/air face.
+   ============================================================ */
+var CHUNK = 16;
+var AXIS_U = [1, 2, 0];
+var AXIS_V = [2, 0, 1];
+
+/*
+  emitQuad(mat, d, s, base, ui, vj, w, h)
+    d    : axis of the face normal (0=x,1=y,2=z)
+    s    : +1 / -1 sign of the normal
+    base : voxel coordinate along d
+    ui,vj: quad origin along axes AXIS_U[d] / AXIS_V[d]
+    w,h  : quad extent along u / v
+*/
+function meshChunk(grid, dim, ox, oy, oz, cs, emitQuad) {
+  var mask = new Int32Array(cs * cs);
+  var pos = [0, 0, 0], nb = [0, 0, 0];
+  var origin = [ox, oy, oz];
+
+  function at(x, y, z) {
+    if (x < 0 || y < 0 || z < 0 || x >= dim || y >= dim || z >= dim) return 0;
+    return grid[x + dim * (y + dim * z)];
+  }
+
+  for (var d = 0; d < 3; d++) {
+    var u = AXIS_U[d], v = AXIS_V[d];
+    for (var s = -1; s <= 1; s += 2) {
+      for (var a = 0; a < cs; a++) {
+        var base = origin[d] + a;
+        if (base >= dim) break;
+        mask.fill(0);
+        var any = false;
+
+        for (var j = 0; j < cs; j++) {
+          var vv = origin[v] + j;
+          if (vv >= dim) break;
+          for (var i = 0; i < cs; i++) {
+            var uu = origin[u] + i;
+            if (uu >= dim) break;
+            pos[d] = base; pos[u] = uu; pos[v] = vv;
+            var m = at(pos[0], pos[1], pos[2]);
+            if (m === 0) continue;
+            nb[0] = pos[0]; nb[1] = pos[1]; nb[2] = pos[2];
+            nb[d] += s;
+            if (at(nb[0], nb[1], nb[2]) !== 0) continue;
+            mask[j * cs + i] = m;
+            any = true;
+          }
+        }
+        if (!any) continue;
+
+        for (var jj = 0; jj < cs; jj++) {
+          for (var ii = 0; ii < cs;) {
+            var mv = mask[jj * cs + ii];
+            if (!mv) { ii++; continue; }
+            var w = 1;
+            while (ii + w < cs && mask[jj * cs + ii + w] === mv) w++;
+            var h = 1;
+            grow: while (jj + h < cs) {
+              for (var k = 0; k < w; k++) {
+                if (mask[(jj + h) * cs + ii + k] !== mv) break grow;
+              }
+              h++;
+            }
+            for (var b = 0; b < h; b++)
+              for (var k2 = 0; k2 < w; k2++)
+                mask[(jj + b) * cs + ii + k2] = 0;
+
+            emitQuad(mv, d, s, base, origin[u] + ii, origin[v] + jj, w, h);
+            ii += w;
+          }
+        }
+      }
+    }
+  }
+}
+
+/* world-space uv so merged quads keep a 1-block texture repeat */
+function faceUV(d, x, y, z, out) {
+  if (d === 0) { out[0] = z; out[1] = -y; }
+  else if (d === 1) { out[0] = x; out[1] = z; }
+  else { out[0] = x; out[1] = -y; }
+}
+
+/* Build interleaved vertex data (pos3, nrm3, uv2) for one chunk,
+   grouped by material and split so index buffers stay 16-bit safe. */
+var VERT_LIMIT = 65532;
+
+function buildChunkGeometry(grid, dim, cx, cy, cz, cs) {
+  var groups = {};          // mat -> { batches:[], P:[], I:[], v:0 }
+  var uv = [0, 0];
+
+  function grp(m) {
+    var g = groups[m];
+    if (!g) { g = groups[m] = { batches: [], P: [], I: [], v: 0 }; }
+    return g;
+  }
+  function flush(g) {
+    if (g.v === 0) return;
+    g.batches.push({ data: new Float32Array(g.P), index: new Uint16Array(g.I), count: g.I.length });
+    g.P.length = 0; g.I.length = 0; g.v = 0;
+  }
+
+  meshChunk(grid, dim, cx * cs, cy * cs, cz * cs, cs, function (m, d, s, base, ui, vj, w, h) {
+    var g = grp(m);
+    if (g.v + 4 > VERT_LIMIT) flush(g);
+
+    var u = AXIS_U[d], v = AXIS_V[d];
+    var face = base + (s > 0 ? 1 : 0);
+    var c = [[ui, vj], [ui + w, vj], [ui + w, vj + h], [ui, vj + h]];
+    var ord = s > 0 ? [0, 1, 2, 3] : [0, 3, 2, 1];
+    var nx = d === 0 ? s : 0, ny = d === 1 ? s : 0, nz = d === 2 ? s : 0;
+    var p = [0, 0, 0];
+
+    for (var t = 0; t < 4; t++) {
+      var cc = c[ord[t]];
+      p[d] = face; p[u] = cc[0]; p[v] = cc[1];
+      faceUV(d, p[0], p[1], p[2], uv);
+      g.P.push(p[0], p[1], p[2], nx, ny, nz, uv[0], uv[1]);
+    }
+    var b = g.v;
+    g.I.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    g.v += 4;
+  });
+
+  var out = [];
+  for (var m in groups) {
+    var g = groups[m];
+    flush(g);
+    if (g.batches.length) out.push({ mat: m | 0, batches: g.batches });
+  }
+  return out;
+}
+
+
+/* ---- 50-renderer.js ---- */
+/* ============================================================
+   Mazecraft — WebGL1 renderer
+   ============================================================ */
+
+var VS_VOXEL = [
+  'precision highp float;',
+  'attribute vec3 aPos;',
+  'attribute vec3 aNrm;',
+  'attribute vec2 aUV;',
+  'uniform mat4 uMVP;',
+  'varying vec3 vWorld;',
+  'varying vec3 vNrm;',
+  'varying vec2 vUV;',
+  'void main(){',
+  '  vWorld = aPos;',
+  '  vNrm = aNrm;',
+  '  vUV = aUV;',
+  '  gl_Position = uMVP * vec4(aPos, 1.0);',
+  '}'
+].join('\n');
+
+var FS_VOXEL = [
+  'precision highp float;',
+  'uniform sampler2D uTex;',
+  'uniform vec3 uCam;',
+  'uniform float uAmbient;',
+  'uniform float uTorchRange;',
+  'uniform float uTorchPower;',
+  'uniform vec3 uTorchTint;',
+  'uniform float uEmissive;',
+  'uniform vec3 uFogColor;',
+  'uniform float uFogNear;',
+  'uniform float uFogFar;',
+  'uniform vec3 uBeaconPos;',
+  'uniform vec3 uBeaconColor;',
+  'uniform float uBeaconRange;',
+  'varying vec3 vWorld;',
+  'varying vec3 vNrm;',
+  'varying vec2 vUV;',
+  'void main(){',
+  '  vec3 base = texture2D(uTex, vUV).rgb;',
+  '  vec3 n = normalize(vNrm);',
+  '  float sky = 0.58 + 0.42 * clamp(dot(n, normalize(vec3(0.38, 0.88, 0.27))) * 0.5 + 0.5, 0.0, 1.0);',
+  '  vec3 toCam = uCam - vWorld;',
+  '  float dist = length(toCam);',
+  '  vec3 L = toCam / max(dist, 0.0001);',
+  '  float att = clamp(1.0 - dist / uTorchRange, 0.0, 1.0);',
+  '  att *= att;',
+  '  float ndl = max(dot(n, L), 0.0);',
+  '  vec3 torch = uTorchTint * (att * (0.22 + 0.78 * ndl) * uTorchPower);',
+  '  vec3 toB = uBeaconPos - vWorld;',
+  '  float db = length(toB);',
+  '  float ab = clamp(1.0 - db / uBeaconRange, 0.0, 1.0);',
+  '  ab *= ab;',
+  '  float ndb = max(dot(n, toB / max(db, 0.0001)), 0.0);',
+  '  vec3 beacon = uBeaconColor * (ab * (0.25 + 0.75 * ndb));',
+  '  vec3 lit = base * (uAmbient * sky + uEmissive * 1.45) + base * torch + base * beacon;',
+  '  float fog = clamp((dist - uFogNear) / max(uFogFar - uFogNear, 0.001), 0.0, 1.0);',
+  '  gl_FragColor = vec4(mix(lit, uFogColor, fog), 1.0);',
+  '}'
+].join('\n');
+
+var VS_POINT = [
+  'precision highp float;',
+  'attribute vec3 aPos;',
+  'attribute float aT;',
+  'uniform mat4 uMVP;',
+  'uniform vec3 uCam;',
+  'uniform float uSize;',
+  'varying float vT;',
+  'varying float vFade;',
+  'void main(){',
+  '  vT = aT;',
+  '  vec4 p = uMVP * vec4(aPos, 1.0);',
+  '  float d = distance(uCam, aPos);',
+  '  gl_PointSize = clamp(uSize / max(d, 0.5), 2.0, 26.0);',
+  '  vFade = clamp(1.0 - d / 46.0, 0.0, 1.0);',
+  '  gl_Position = p;',
+  '}'
+].join('\n');
+
+var FS_POINT = [
+  'precision highp float;',
+  'uniform vec3 uColorA;',
+  'uniform vec3 uColorB;',
+  'uniform float uPhase;',
+  'varying float vT;',
+  'varying float vFade;',
+  'void main(){',
+  '  vec2 c = gl_PointCoord - vec2(0.5);',
+  '  float r = length(c);',
+  '  if (r > 0.5) discard;',
+  '  float a = pow(1.0 - r * 2.0, 1.6) * vFade;',
+  '  float pulse = 0.55 + 0.45 * sin(vT * 22.0 - uPhase * 3.4);',
+  '  vec3 col = mix(uColorA, uColorB, pulse);',
+  '  gl_FragColor = vec4(col * a, a);',
+  '}'
+].join('\n');
+
+var VS_BG = [
+  'precision highp float;',
+  'attribute vec2 aPos;',
+  'varying vec2 vP;',
+  'void main(){ vP = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.999, 1.0); }'
+].join('\n');
+
+var FS_BG = [
+  'precision highp float;',
+  'uniform vec3 uTop;',
+  'uniform vec3 uBottom;',
+  'varying vec2 vP;',
+  'void main(){',
+  '  float t = pow(clamp(vP.y, 0.0, 1.0), 0.85);',
+  '  vec3 c = mix(uBottom, uTop, t);',
+  '  gl_FragColor = vec4(c, 1.0);',
+  '}'
+].join('\n');
+
+function compile(gl, type, src) {
+  var s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    throw new Error('Shader failed to compile:\n' + gl.getShaderInfoLog(s) + '\n' + src);
+  }
+  return s;
+}
+
+function makeProgram(gl, vs, fs, attrs) {
+  var p = gl.createProgram();
+  gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, fs));
+  for (var i = 0; i < attrs.length; i++) gl.bindAttribLocation(p, i, attrs[i]);
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+    throw new Error('Program failed to link: ' + gl.getProgramInfoLog(p));
+  }
+  var u = {};
+  var n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (var k = 0; k < n; k++) {
+    var info = gl.getActiveUniform(p, k);
+    u[info.name] = gl.getUniformLocation(p, info.name);
+  }
+  return { prog: p, u: u };
+}
+
+function uploadTexture(gl, tex, texbuf) {
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, texbuf.s, texbuf.s, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+    new Uint8Array(texbuf.d.buffer, texbuf.d.byteOffset, texbuf.d.length));
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST_MIPMAP_LINEAR);
+  gl.generateMipmap(gl.TEXTURE_2D);
+}
+
+/* ---------------- Renderer ---------------- */
+function Renderer(canvas) {
+  var gl = canvas.getContext('webgl', {
+    antialias: false, alpha: false, depth: true, stencil: false,
+    powerPreference: 'high-performance', preserveDrawingBuffer: false
+  }) || canvas.getContext('experimental-webgl');
+  if (!gl) throw new Error('WebGL is not available in this browser.');
+
+  this.gl = gl;
+  this.canvas = canvas;
+  this.voxel = makeProgram(gl, VS_VOXEL, FS_VOXEL, ['aPos', 'aNrm', 'aUV']);
+  this.point = makeProgram(gl, VS_POINT, FS_POINT, ['aPos', 'aT']);
+  this.bg = makeProgram(gl, VS_BG, FS_BG, ['aPos']);
+
+  this.bgBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, this.bgBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+
+  this.textures = {};
+  for (var m = 1; m <= 4; m++) this.textures[m] = gl.createTexture();
+  this.emissive = { 1: 0, 2: 0, 3: 0, 4: 0 };
+
+  this.chunks = [];
+  this.pathBuf = null;
+  this.pathCount = 0;
+
+  this.mvp = new Float32Array(16);
+  this.proj = new Float32Array(16);
+  this.view = new Float32Array(16);
+  this.planes = new Float32Array(24);
+
+  this.stats = { drawn: 0, quads: 0, tris: 0 };
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.enable(gl.CULL_FACE);
+  gl.cullFace(gl.BACK);
+}
+
+Renderer.prototype.setBlockTexture = function (slot, blockDef) {
+  uploadTexture(this.gl, this.textures[slot], makeBlockTexture(blockDef));
+  var em = blockDef.em || 0;
+  if (slot === 3 || slot === 4) em = Math.max(em, 0.62);
+  this.emissive[slot] = em;
+};
+
+Renderer.prototype.disposeWorld = function () {
+  var gl = this.gl;
+  for (var i = 0; i < this.chunks.length; i++) {
+    var c = this.chunks[i];
+    for (var g = 0; g < c.groups.length; g++) {
+      var bs = c.groups[g].batches;
+      for (var b = 0; b < bs.length; b++) { gl.deleteBuffer(bs[b].vbo); gl.deleteBuffer(bs[b].ibo); }
+    }
+  }
+  this.chunks = [];
+  if (this.pathBuf) { gl.deleteBuffer(this.pathBuf); this.pathBuf = null; }
+  this.pathCount = 0;
+};
+
+Renderer.prototype.addChunk = function (cx, cy, cz, cs, geo) {
+  var gl = this.gl;
+  var groups = [];
+  var quads = 0;
+  for (var i = 0; i < geo.length; i++) {
+    var src = geo[i], batches = [];
+    for (var b = 0; b < src.batches.length; b++) {
+      var sb = src.batches[b];
+      var vbo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, sb.data, gl.STATIC_DRAW);
+      var ibo = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, sb.index, gl.STATIC_DRAW);
+      batches.push({ vbo: vbo, ibo: ibo, count: sb.count });
+      quads += sb.count / 6;
+    }
+    groups.push({ mat: src.mat, batches: batches });
+  }
+  if (groups.length) {
+    this.chunks.push({
+      x0: cx * cs, y0: cy * cs, z0: cz * cs,
+      x1: cx * cs + cs, y1: cy * cs + cs, z1: cz * cs + cs,
+      groups: groups
+    });
+  }
+  return quads;
+};
+
+Renderer.prototype.setPath = function (path) {
+  var gl = this.gl;
+  if (this.pathBuf) gl.deleteBuffer(this.pathBuf);
+  this.pathBuf = null; this.pathCount = 0;
+  if (!path || !path.length) return;
+  var data = new Float32Array(path.length * 4);
+  for (var i = 0; i < path.length; i++) {
+    data[i * 4] = path[i][0]; data[i * 4 + 1] = path[i][1]; data[i * 4 + 2] = path[i][2];
+    data[i * 4 + 3] = i / path.length;
+  }
+  this.pathBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, this.pathBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  this.pathCount = path.length;
+};
+
+Renderer.prototype.resize = function (w, h, dpr) {
+  var cw = Math.max(1, Math.floor(w * dpr)), ch = Math.max(1, Math.floor(h * dpr));
+  if (this.canvas.width !== cw || this.canvas.height !== ch) {
+    this.canvas.width = cw; this.canvas.height = ch;
+  }
+  this.gl.viewport(0, 0, cw, ch);
+  return cw / ch;
+};
+
+Renderer.prototype.render = function (cam, env) {
+  var gl = this.gl;
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  /* background gradient */
+  gl.disable(gl.DEPTH_TEST);
+  gl.useProgram(this.bg.prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, this.bgBuf);
+  gl.enableVertexAttribArray(0);
+  gl.disableVertexAttribArray(1);
+  gl.disableVertexAttribArray(2);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.uniform3fv(this.bg.u.uTop, env.skyTop);
+  gl.uniform3fv(this.bg.u.uBottom, env.skyBottom);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.enable(gl.DEPTH_TEST);
+
+  m4mul(this.mvp, this.proj, this.view);
+  extractPlanes(this.mvp, this.planes);
+
+  /* visible chunk set */
+  var vis = [];
+  var maxD = env.cullDistance;
+  for (var i = 0; i < this.chunks.length; i++) {
+    var c = this.chunks[i];
+    if (!aabbInFrustum(this.planes, c.x0, c.y0, c.z0, c.x1, c.y1, c.z1)) continue;
+    if (maxD < 1e8) {
+      var dx = Math.max(c.x0 - cam.pos[0], 0, cam.pos[0] - c.x1);
+      var dy = Math.max(c.y0 - cam.pos[1], 0, cam.pos[1] - c.y1);
+      var dz = Math.max(c.z0 - cam.pos[2], 0, cam.pos[2] - c.z1);
+      if (dx * dx + dy * dy + dz * dz > maxD * maxD) continue;
+    }
+    vis.push(c);
+  }
+
+  var V = this.voxel;
+  gl.useProgram(V.prog);
+  gl.enableVertexAttribArray(0);
+  gl.enableVertexAttribArray(1);
+  gl.enableVertexAttribArray(2);
+  gl.uniformMatrix4fv(V.u.uMVP, false, this.mvp);
+  gl.uniform3fv(V.u.uCam, cam.pos);
+  gl.uniform1f(V.u.uAmbient, env.ambient);
+  gl.uniform1f(V.u.uTorchRange, env.torchRange);
+  gl.uniform1f(V.u.uTorchPower, env.torchPower);
+  gl.uniform3fv(V.u.uTorchTint, env.torchTint);
+  gl.uniform3fv(V.u.uFogColor, env.fogColor);
+  gl.uniform1f(V.u.uFogNear, env.fogNear);
+  gl.uniform1f(V.u.uFogFar, env.fogFar);
+  gl.uniform3fv(V.u.uBeaconPos, env.beaconPos);
+  gl.uniform3fv(V.u.uBeaconColor, env.beaconColor);
+  gl.uniform1f(V.u.uBeaconRange, env.beaconRange);
+  gl.uniform1i(V.u.uTex, 0);
+  gl.activeTexture(gl.TEXTURE0);
+
+  var tris = 0;
+  for (var m = 1; m <= 4; m++) {
+    var bound = false;
+    for (var v = 0; v < vis.length; v++) {
+      var ch = vis[v];
+      for (var g = 0; g < ch.groups.length; g++) {
+        var grp = ch.groups[g];
+        if (grp.mat !== m) continue;
+        if (!bound) {
+          gl.bindTexture(gl.TEXTURE_2D, this.textures[m]);
+          gl.uniform1f(V.u.uEmissive, this.emissive[m]);
+          bound = true;
+        }
+        for (var b = 0; b < grp.batches.length; b++) {
+          var bt = grp.batches[b];
+          gl.bindBuffer(gl.ARRAY_BUFFER, bt.vbo);
+          gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 32, 0);
+          gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 32, 12);
+          gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 32, 24);
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bt.ibo);
+          gl.drawElements(gl.TRIANGLES, bt.count, gl.UNSIGNED_SHORT, 0);
+          tris += bt.count / 3;
+        }
+      }
+    }
+  }
+
+  /* solution trail */
+  if (env.showPath && this.pathCount) {
+    var P = this.point;
+    gl.useProgram(P.prog);
+    gl.enableVertexAttribArray(0);
+    gl.enableVertexAttribArray(1);
+    gl.disableVertexAttribArray(2);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.pathBuf);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 16, 12);
+    gl.uniformMatrix4fv(P.u.uMVP, false, this.mvp);
+    gl.uniform3fv(P.u.uCam, cam.pos);
+    gl.uniform1f(P.u.uSize, 190.0);
+    gl.uniform3fv(P.u.uColorA, env.pathColorA);
+    gl.uniform3fv(P.u.uColorB, env.pathColorB);
+    gl.uniform1f(P.u.uPhase, env.time);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+    gl.depthMask(false);
+    gl.drawArrays(gl.POINTS, 0, this.pathCount);
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+  }
+
+  this.stats.drawn = vis.length;
+  this.stats.tris = tris;
+};
+
+
+/* ---- 60-app.js ---- */
+/* ============================================================
+   Mazecraft — application
+   ============================================================ */
+(function () {
+'use strict';
+
+var $ = function (id) { return document.getElementById(id); };
+var canvas = $('gl');
+var renderer;
+
+try {
+  renderer = new Renderer(canvas);
+} catch (e) {
+  $('overlay').innerHTML = '<div class="ov-card"><h1>Mazecraft</h1><p class="bad">' + e.message + '</p></div>';
+  return;
+}
+
+var SLOTS = [
+  { id: 1, label: 'Maze walls', def: 'stone_bricks' },
+  { id: 2, label: 'Outer shell', def: 'deepslate' },
+  { id: 3, label: 'Entrance frame', def: 'redstone_lamp' },
+  { id: 4, label: 'Exit frame', def: 'sea_lantern' }
+];
+
+var S = {
+  seed: (Math.random() * 1e9) | 0,
+  cells: 20,
+  corridor: 2,
+  braid: 0,
+  blocks: { 1: BLOCK_INDEX.stone_bricks, 2: BLOCK_INDEX.deepslate, 3: BLOCK_INDEX.redstone_lamp, 4: BLOCK_INDEX.sea_lantern },
+  activeSlot: 1,
+  maze: null, sol: null,
+  building: false, queue: null, qi: 0, quads: 0,
+  pos: [-4, 2, 2], yaw: 0, pitch: 0,
+  vel: [0, 0, 0],
+  keys: {}, locked: false,
+  speed: 9, torch: 15, ambient: 0.22, fogFar: 34, beacon: 1.0, sens: 0.0022,
+  showPath: false, showMap: true, noclip: false,
+  entered: false, won: false, t0: 0, elapsed: 0,
+  time: 0, shot: false, fps: 0
+};
+
+/* ---------------- block palette UI ---------------- */
+function swatchCanvas(def, px) {
+  var c = document.createElement('canvas');
+  c.width = TEX_SIZE; c.height = TEX_SIZE;
+  c.style.width = px + 'px'; c.style.height = px + 'px';
+  var ctx = c.getContext('2d');
+  var img = ctx.createImageData(TEX_SIZE, TEX_SIZE);
+  var T = makeBlockTexture(def);
+  for (var i = 0; i < img.data.length; i++) img.data[i] = T.d[i];
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+function buildSlotChips() {
+  var host = $('slots');
+  host.innerHTML = '';
+  SLOTS.forEach(function (sl) {
+    var chip = document.createElement('button');
+    chip.className = 'slot' + (S.activeSlot === sl.id ? ' on' : '');
+    chip.id = 'slot' + sl.id;
+    chip.appendChild(swatchCanvas(BLOCKS[S.blocks[sl.id]], 26));
+    var t = document.createElement('span');
+    t.innerHTML = sl.label + '<em>' + BLOCKS[S.blocks[sl.id]].name + '</em>';
+    chip.appendChild(t);
+    chip.onclick = function () { S.activeSlot = sl.id; buildSlotChips(); markPalette(); };
+    host.appendChild(chip);
+  });
+}
+
+function markPalette() {
+  var cur = S.blocks[S.activeSlot];
+  var nodes = $('palette').children;
+  for (var i = 0; i < nodes.length; i++) {
+    nodes[i].className = 'pal' + (i === cur ? ' on' : '');
+  }
+}
+
+function buildPalette() {
+  var host = $('palette');
+  host.innerHTML = '';
+  BLOCKS.forEach(function (def, i) {
+    var b = document.createElement('button');
+    b.className = 'pal';
+    b.title = def.name;
+    b.appendChild(swatchCanvas(def, 30));
+    b.onclick = function () {
+      S.blocks[S.activeSlot] = i;
+      renderer.setBlockTexture(S.activeSlot, def);
+      buildSlotChips(); markPalette();
+    };
+    host.appendChild(b);
+  });
+  markPalette();
+}
+
+/* ---------------- sizing ---------------- */
+function cellRange() {
+  return S.corridor === 2 ? [20, 34] : [30, 50];
+}
+function syncSize() {
+  var r = cellRange();
+  var sl = $('cells');
+  sl.min = r[0]; sl.max = r[1];
+  S.cells = clamp(S.cells, r[0], r[1]);
+  sl.value = S.cells;
+  var dim = S.cells * (S.corridor + 1) + 1;
+  $('dims').textContent = dim + ' × ' + dim + ' × ' + dim + ' blocks';
+  $('cellsOut').textContent = S.cells + '³ cells (' + (S.cells * S.cells * S.cells).toLocaleString() + ')';
+}
+
+/* ---------------- generation ---------------- */
+function setProgress(frac, msg) {
+  $('progress').style.display = frac >= 1 ? 'none' : 'flex';
+  $('pbar').style.width = Math.round(frac * 100) + '%';
+  $('ptext').textContent = msg;
+}
+
+function generate() {
+  S.building = true;
+  S.won = false; S.entered = false; S.elapsed = 0;
+  $('banner').style.display = 'none';
+  setProgress(0.02, 'Carving passages…');
+
+  setTimeout(function () {
+    S.maze = buildMaze({ cells: S.cells, corridor: S.corridor, seed: S.seed, braid: S.braid });
+    setProgress(0.12, 'Solving…');
+    S.sol = solveMaze(S.maze);
+    renderer.disposeWorld();
+    renderer.setPath(S.sol.path);
+
+    var dim = S.maze.dim;
+    var nc = Math.ceil(dim / CHUNK);
+    var q = [];
+    for (var z = 0; z < nc; z++) for (var y = 0; y < nc; y++) for (var x = 0; x < nc; x++) q.push([x, y, z]);
+    q.sort(function (a, b) {
+      var da = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+      var db = b[0] * b[0] + b[1] * b[1] + b[2] * b[2];
+      return da - db;
+    });
+    S.queue = q; S.qi = 0; S.quads = 0;
+    teleportToEntrance();
+    $('stats').textContent = 'Shortest route: ' + S.sol.length.toLocaleString() + ' blocks';
+  }, 30);
+}
+
+function stepBuild(budgetMs) {
+  if (!S.queue) return;
+  var t0 = performance.now();
+  while (S.qi < S.queue.length) {
+    var c = S.queue[S.qi++];
+    var geo = buildChunkGeometry(S.maze.grid, S.maze.dim, c[0], c[1], c[2], CHUNK);
+    S.quads += renderer.addChunk(c[0], c[1], c[2], CHUNK, geo);
+    if (performance.now() - t0 > budgetMs) break;
+  }
+  var frac = 0.12 + 0.88 * (S.qi / S.queue.length);
+  if (S.qi >= S.queue.length) {
+    S.queue = null; S.building = false;
+    setProgress(1, '');
+    $('stats').textContent = 'Shortest route: ' + S.sol.length.toLocaleString() +
+      ' blocks  ·  ' + S.quads.toLocaleString() + ' merged faces';
+  } else {
+    setProgress(frac, 'Building geometry… ' + Math.round(frac * 100) + '%');
+  }
+}
+
+function teleportToEntrance() {
+  var e = S.maze.entryPos;
+  S.pos = [-4.5, e[1], e[2]];
+  S.vel = [0, 0, 0];
+  S.yaw = 0; S.pitch = 0;
+  S.entered = false; S.won = false; S.elapsed = 0;
+  $('banner').style.display = 'none';
+}
+
+/* ---------------- collision ---------------- */
+var RAD = 0.3;
+function solidAt(x, y, z) {
+  var m = S.maze;
+  if (!m) return false;
+  var d = m.dim;
+  if (x < 0 || y < 0 || z < 0 || x >= d || y >= d || z >= d) return false;
+  return m.grid[x + d * (y + d * z)] !== 0;
+}
+
+function overlaps(p) {
+  var x0 = Math.floor(p[0] - RAD), x1 = Math.floor(p[0] + RAD);
+  var y0 = Math.floor(p[1] - RAD), y1 = Math.floor(p[1] + RAD);
+  var z0 = Math.floor(p[2] - RAD), z1 = Math.floor(p[2] + RAD);
+  for (var z = z0; z <= z1; z++)
+    for (var y = y0; y <= y1; y++)
+      for (var x = x0; x <= x1; x++)
+        if (solidAt(x, y, z)) return true;
+  return false;
+}
+
+function moveAxis(p, axis, d) {
+  if (d === 0) return;
+  p[axis] += d;
+  if (S.noclip || !overlaps(p)) return;
+  if (d > 0) p[axis] = Math.floor(p[axis] + RAD) - RAD - 0.0015;
+  else p[axis] = Math.floor(p[axis] - RAD) + 1 + RAD + 0.0015;
+  if (overlaps(p)) p[axis] -= d;
+}
+
+/* ---------------- camera basis ---------------- */
+var camF = [0, 0, 0], camR = [0, 0, 0], camU = [0, 0, 0];
+function updateBasis() {
+  var cp = Math.cos(S.pitch), sp = Math.sin(S.pitch);
+  camF[0] = cp * Math.cos(S.yaw); camF[1] = sp; camF[2] = cp * Math.sin(S.yaw);
+  v3norm(camF);
+  v3cross(camF, [0, 1, 0], camR); v3norm(camR);
+  v3cross(camR, camF, camU); v3norm(camU);
+}
+
+/* ---------------- input ---------------- */
+canvas.addEventListener('click', function () {
+  if (!S.locked) canvas.requestPointerLock();
+});
+document.addEventListener('pointerlockchange', function () {
+  S.locked = document.pointerLockElement === canvas;
+  $('overlay').style.display = S.locked ? 'none' : 'flex';
+  $('panel').classList.toggle('dim', S.locked);
+  if (!S.locked) S.keys = {};
+});
+document.addEventListener('mousemove', function (e) {
+  if (!S.locked) return;
+  S.yaw += e.movementX * S.sens;
+  S.pitch = clamp(S.pitch - e.movementY * S.sens, -1.5533, 1.5533);
+});
+document.addEventListener('keydown', function (e) {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
+  S.keys[e.code] = true;
+  if (e.code === 'KeyG') { S.showPath = !S.showPath; $('tglPath').checked = S.showPath; }
+  if (e.code === 'KeyM') { S.showMap = !S.showMap; $('tglMap').checked = S.showMap; applyMap(); }
+  if (e.code === 'KeyN') S.noclip = !S.noclip;
+  if (e.code === 'KeyR') teleportToEntrance();
+  if (e.code === 'Tab') { e.preventDefault(); $('panel').classList.toggle('hidden'); }
+  if (e.code === 'Space') e.preventDefault();
+});
+document.addEventListener('keyup', function (e) { S.keys[e.code] = false; });
+
+/* ---------------- minimap ---------------- */
+var mapCv = $('minimap'), mapCtx = mapCv.getContext('2d');
+var sliceCv = document.createElement('canvas'), sliceCtx = sliceCv.getContext('2d');
+
+function applyMap() { mapCv.style.display = S.showMap ? 'block' : 'none'; }
+
+var MAP_COL = {
+  0: [11, 13, 16], 1: [74, 80, 90], 2: [40, 44, 52], 3: [255, 150, 60], 4: [110, 235, 220]
+};
+
+function drawMinimap() {
+  if (!S.showMap || !S.maze) return;
+  var m = S.maze, dim = m.dim;
+  if (sliceCv.width !== dim) { sliceCv.width = dim; sliceCv.height = dim; }
+  var y = clamp(Math.floor(S.pos[1]), 0, dim - 1);
+  var img = sliceCtx.createImageData(dim, dim);
+  var d = img.data;
+  for (var z = 0; z < dim; z++) {
+    for (var x = 0; x < dim; x++) {
+      var v = m.grid[x + dim * (y + dim * z)];
+      var c = MAP_COL[v] || MAP_COL[1];
+      var i = (z * dim + x) * 4;
+      d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
+    }
+  }
+  if (S.showPath && S.sol) {
+    for (var k = 0; k < S.sol.path.length; k++) {
+      var p = S.sol.path[k];
+      if (Math.floor(p[1]) !== y) continue;
+      var ii = ((Math.floor(p[2])) * dim + Math.floor(p[0])) * 4;
+      d[ii] = 255; d[ii + 1] = 208; d[ii + 2] = 96;
+    }
+  }
+  sliceCtx.putImageData(img, 0, 0);
+
+  var W = mapCv.width;
+  mapCtx.imageSmoothingEnabled = false;
+  mapCtx.clearRect(0, 0, W, W);
+  mapCtx.drawImage(sliceCv, 0, 0, dim, dim, 0, 0, W, W);
+
+  var sc = W / dim;
+  var px = S.pos[0] * sc, pz = S.pos[2] * sc;
+  mapCtx.strokeStyle = '#ff4d4d'; mapCtx.lineWidth = 2;
+  mapCtx.beginPath(); mapCtx.arc(px, pz, 3.2, 0, 6.2832); mapCtx.stroke();
+  mapCtx.beginPath();
+  mapCtx.moveTo(px, pz);
+  mapCtx.lineTo(px + Math.cos(S.yaw) * 10, pz + Math.sin(S.yaw) * 10);
+  mapCtx.stroke();
+  mapCtx.strokeStyle = 'rgba(255,255,255,0.18)';
+  mapCtx.lineWidth = 1;
+  mapCtx.strokeRect(0.5, 0.5, W - 1, W - 1);
+  $('mapY').textContent = 'y = ' + y;
+}
+
+/* ---------------- compass ---------------- */
+var cmpCv = $('compass'), cmpCtx = cmpCv.getContext('2d');
+function drawCompass() {
+  if (!S.maze) return;
+  var W = cmpCv.width, R = W / 2;
+  cmpCtx.clearRect(0, 0, W, W);
+  var ex = S.maze.exitPos;
+  var dx = ex[0] - S.pos[0], dy = ex[1] - S.pos[1], dz = ex[2] - S.pos[2];
+  var fwd = [Math.cos(S.yaw), 0, Math.sin(S.yaw)];
+  var rgt = [-Math.sin(S.yaw), 0, Math.cos(S.yaw)];
+  var a = Math.atan2(dx * rgt[0] + dz * rgt[2], dx * fwd[0] + dz * fwd[2]);
+
+  cmpCtx.strokeStyle = 'rgba(255,255,255,0.16)';
+  cmpCtx.lineWidth = 1;
+  cmpCtx.beginPath(); cmpCtx.arc(R, R, R - 3, 0, 6.2832); cmpCtx.stroke();
+
+  cmpCtx.save();
+  cmpCtx.translate(R, R);
+  cmpCtx.rotate(a - Math.PI / 2);
+  cmpCtx.fillStyle = '#6fe8d8';
+  cmpCtx.beginPath();
+  cmpCtx.moveTo(0, -R + 8); cmpCtx.lineTo(6, R - 14); cmpCtx.lineTo(0, R - 19); cmpCtx.lineTo(-6, R - 14);
+  cmpCtx.closePath(); cmpCtx.fill();
+  cmpCtx.restore();
+
+  cmpCtx.fillStyle = 'rgba(230,236,244,0.85)';
+  cmpCtx.font = '10px ui-monospace, monospace';
+  cmpCtx.textAlign = 'center';
+  var v = dy > 1 ? '▲ ' + Math.round(dy) : (dy < -1 ? '▼ ' + Math.round(-dy) : '•');
+  cmpCtx.fillText(v, R, R + 4);
+}
+
+/* ---------------- HUD ---------------- */
+function fmtTime(s) {
+  var m = Math.floor(s / 60), r = s - m * 60;
+  return m + ':' + (r < 10 ? '0' : '') + r.toFixed(1);
+}
+
+function updateHUD() {
+  if (!S.maze) return;
+  var dim = S.maze.dim;
+  var bx = Math.floor(S.pos[0]), by = Math.floor(S.pos[1]), bz = Math.floor(S.pos[2]);
+  $('hudPos').textContent = bx + ', ' + by + ', ' + bz;
+  var dtxt = '—';
+  if (bx >= 0 && by >= 0 && bz >= 0 && bx < dim && by < dim && bz < dim && S.sol) {
+    var dv = S.sol.dist[bx + dim * (by + dim * bz)];
+    if (dv >= 0) dtxt = dv.toLocaleString() + ' blocks';
+  }
+  $('hudDist').textContent = dtxt;
+  $('hudTime').textContent = fmtTime(S.elapsed);
+  $('hudFps').textContent = Math.round(S.fps) + ' fps';
+}
+
+/* ---------------- main loop ---------------- */
+var last = performance.now();
+var env = {
+  ambient: 0.22, torchRange: 15, torchPower: 1.25, torchTint: new Float32Array([1.0, 0.93, 0.8]),
+  fogColor: new Float32Array([0.03, 0.035, 0.05]), fogNear: 2, fogFar: 34,
+  beaconPos: new Float32Array([0, 0, 0]), beaconColor: new Float32Array([0.16, 0.5, 0.48]), beaconRange: 26,
+  skyTop: new Float32Array([0.055, 0.07, 0.11]), skyBottom: new Float32Array([0.015, 0.02, 0.03]),
+  pathColorA: new Float32Array([1.0, 0.72, 0.22]), pathColorB: new Float32Array([1.0, 0.95, 0.65]),
+  showPath: false, cullDistance: 1e9, time: 0
+};
+
+/* 0 outside the cube, 1 once you are well inside it — blended so the
+   light and view distance shift smoothly as you pass through a doorway */
+function insideFactor() {
+  if (!S.maze) return 0;
+  var d = S.maze.dim, depth = 1e9;
+  for (var i = 0; i < 3; i++) depth = Math.min(depth, S.pos[i], d - S.pos[i]);
+  return clamp(depth / 7, 0, 1);
+}
+
+function frame(now) {
+  var dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+  S.time += dt;
+  S.fps = S.fps * 0.9 + (1 / Math.max(dt, 0.0001)) * 0.1;
+
+  if (S.building) stepBuild(14);
+
+  /* movement */
+  updateBasis();
+  var flatF = [Math.cos(S.yaw), 0, Math.sin(S.yaw)];
+  var flatR = [-Math.sin(S.yaw), 0, Math.cos(S.yaw)];
+  var wish = [0, 0, 0];
+  var k = S.keys;
+  if (k.KeyW || k.ArrowUp) { wish[0] += flatF[0]; wish[2] += flatF[2]; }
+  if (k.KeyS || k.ArrowDown) { wish[0] -= flatF[0]; wish[2] -= flatF[2]; }
+  if (k.KeyD || k.ArrowRight) { wish[0] += flatR[0]; wish[2] += flatR[2]; }
+  if (k.KeyA || k.ArrowLeft) { wish[0] -= flatR[0]; wish[2] -= flatR[2]; }
+  if (k.Space) wish[1] += 1;
+  if (k.ShiftLeft || k.ShiftRight) wish[1] -= 1;
+  var wl = Math.sqrt(wish[0] * wish[0] + wish[1] * wish[1] + wish[2] * wish[2]);
+  var spd = S.speed * ((k.ControlLeft || k.ControlRight) ? 2.4 : 1);
+  if (wl > 0) { wish[0] = wish[0] / wl * spd; wish[1] = wish[1] / wl * spd; wish[2] = wish[2] / wl * spd; }
+  var damp = 1 - Math.exp(-16 * dt);
+  for (var i = 0; i < 3; i++) S.vel[i] += (wish[i] - S.vel[i]) * damp;
+  if (S.maze && !S.building) {
+    moveAxis(S.pos, 0, S.vel[0] * dt);
+    moveAxis(S.pos, 1, S.vel[1] * dt);
+    moveAxis(S.pos, 2, S.vel[2] * dt);
+  }
+
+  /* progress / win state */
+  if (S.maze) {
+    if (!S.entered && S.pos[0] > 1.0) { S.entered = true; S.t0 = S.time; }
+    if (S.entered && !S.won) S.elapsed = S.time - S.t0;
+    if (S.entered && !S.won && S.pos[0] > S.maze.dim + 0.4) {
+      S.won = true;
+      $('banner').style.display = 'block';
+      $('banner').innerHTML = 'You found the way out<em>' + fmtTime(S.elapsed) +
+        ' · shortest possible route was ' + S.sol.length.toLocaleString() + ' blocks</em>';
+    }
+  }
+
+  /* env */
+  var inside = insideFactor();
+  var openFar = S.maze ? S.maze.dim * 3.0 : 200;
+  env.ambient = S.ambient * lerp(3.4, 1, inside);
+  env.torchRange = S.torch;
+  env.fogFar = lerp(Math.max(S.fogFar, openFar), S.fogFar, inside);
+  env.fogNear = env.fogFar * lerp(0.5, 0.25, inside);
+  env.beaconRange = 26 * S.beacon;
+  env.beaconColor[0] = 0.16 * S.beacon; env.beaconColor[1] = 0.52 * S.beacon; env.beaconColor[2] = 0.50 * S.beacon;
+  if (S.maze) {
+    env.beaconPos[0] = S.maze.exitPos[0]; env.beaconPos[1] = S.maze.exitPos[1]; env.beaconPos[2] = S.maze.exitPos[2];
+  }
+  env.showPath = S.showPath;
+  env.time = S.time;
+  env.cullDistance = inside >= 1 ? env.fogFar + 20 : 1e9;
+
+  /* draw */
+  var aspect = renderer.resize(canvas.clientWidth, canvas.clientHeight, Math.min(window.devicePixelRatio || 1, 2));
+  m4perspective(renderer.proj, 1.28, aspect, 0.05, Math.max(400, S.maze ? S.maze.dim * 3 : 400));
+  m4view(renderer.view, S.pos, camR, camU, camF);
+  renderer.render({ pos: S.pos }, env);
+
+  if (S.shot) {
+    S.shot = false;
+    var a = document.createElement('a');
+    a.download = 'mazecraft-' + S.seed + '-' + Date.now() + '.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  }
+
+  drawMinimap();
+  drawCompass();
+  updateHUD();
+  requestAnimationFrame(frame);
+}
+
+/* ---------------- wire up controls ---------------- */
+function bindRange(id, outId, get, set, fmt) {
+  var el = $(id);
+  el.value = get();
+  var out = outId ? $(outId) : null;
+  function upd() {
+    set(parseFloat(el.value));
+    if (out) out.textContent = fmt ? fmt(parseFloat(el.value)) : el.value;
+  }
+  el.addEventListener('input', upd);
+  upd();
+}
+
+$('seed').value = S.seed;
+$('seed').addEventListener('change', function () {
+  var v = parseInt($('seed').value, 10);
+  S.seed = isNaN(v) ? 1 : v;
+});
+$('reseed').onclick = function () {
+  S.seed = (Math.random() * 1e9) | 0;
+  $('seed').value = S.seed;
+  generate();
+};
+$('cells').addEventListener('input', function () { S.cells = parseInt(this.value, 10); syncSize(); });
+$('corr1').onclick = function () { S.corridor = 1; corrUI(); };
+$('corr2').onclick = function () { S.corridor = 2; corrUI(); };
+function corrUI() {
+  $('corr1').classList.toggle('on', S.corridor === 1);
+  $('corr2').classList.toggle('on', S.corridor === 2);
+  syncSize();
+}
+bindRange('braid', 'braidOut', function () { return S.braid; }, function (v) { S.braid = v; },
+  function (v) { return v === 0 ? 'none (perfect maze)' : Math.round(v * 100) + '% dead ends looped'; });
+bindRange('torch', 'torchOut', function () { return S.torch; }, function (v) { S.torch = v; },
+  function (v) { return Math.round(v) + ' blocks'; });
+bindRange('ambient', 'ambientOut', function () { return S.ambient; }, function (v) { S.ambient = v; },
+  function (v) { return Math.round(v * 100) + '%'; });
+bindRange('fog', 'fogOut', function () { return S.fogFar; }, function (v) { S.fogFar = v; },
+  function (v) { return Math.round(v) + ' blocks'; });
+bindRange('beacon', 'beaconOut', function () { return S.beacon; }, function (v) { S.beacon = v; },
+  function (v) { return v === 0 ? 'off' : Math.round(v * 100) + '%'; });
+bindRange('speed', 'speedOut', function () { return S.speed; }, function (v) { S.speed = v; },
+  function (v) { return v.toFixed(1) + ' blocks/s'; });
+
+$('tglPath').onchange = function () { S.showPath = this.checked; };
+$('tglMap').onchange = function () { S.showMap = this.checked; applyMap(); };
+$('generate').onclick = function () { generate(); };
+$('respawn').onclick = function () { teleportToEntrance(); };
+$('shot').onclick = function () { S.shot = true; };
+
+/* ---------------- boot ---------------- */
+$('ver').textContent = 'v' + MZ_VERSION;
+buildSlotChips();
+buildPalette();
+corrUI();
+applyMap();
+for (var s = 1; s <= 4; s++) renderer.setBlockTexture(s, BLOCKS[S.blocks[s]]);
+generate();
+requestAnimationFrame(frame);
+
+})();
+
+</script>
+</body>
+</html>
