@@ -171,6 +171,8 @@
       <kbd>Space / Shift</kbd><span>rise and sink</span>
       <kbd>Ctrl</kbd><span>sprint</span>
       <kbd>mouse</kbd><span>look</span>
+      <kbd>right-click</kbd><span>drop a torch (again to take it back)</span>
+      <kbd>C</kbd><span>clear every torch</span>
       <kbd>G</kbd><span>show the shortest route</span>
       <kbd>M</kbd><span>minimap</span>
       <kbd>R</kbd><span>back to the entrance</span>
@@ -252,6 +254,18 @@
   </div>
 
   <div class="group">
+    <div class="glabel">Breadcrumbs</div>
+    <label class="check"><input type="checkbox" id="tglTorch" checked> Right-click drops a torch</label>
+    <div class="row" style="margin-top:4px"><label for="torchGlow">Torch glow</label><span class="val" id="torchGlowOut"></span></div>
+    <input type="range" id="torchGlow" min="0" max="2" step="0.05">
+    <div class="seg" style="margin-top:9px">
+      <button class="btn" id="clearTorch">Clear all</button>
+      <span class="btn" id="torchCount" style="cursor:default;text-align:center;color:var(--muted)">0 torches</span>
+    </div>
+    <div class="sub" style="margin-top:6px">web only — torches are not exported</div>
+  </div>
+
+  <div class="group">
     <div class="glabel">Play</div>
     <div class="row"><label for="speed">Flight speed</label><span class="val" id="speedOut"></span></div>
     <input type="range" id="speed" min="2" max="24" step="0.5">
@@ -269,7 +283,7 @@
 /* ============================================================
    Mazecraft — core math / rng
    ============================================================ */
-var MZ_VERSION = '1.2.0';
+var MZ_VERSION = '1.3.0';
 
 function mulberry32(a) {
   a = a | 0;
@@ -602,8 +616,24 @@ function pat_air(T, d, rnd) {
   }
 }
 
+/* the breadcrumb torch: dark handle, bright ember head */
+function pat_torch(T, d, rnd) {
+  for (var y = 0; y < 16; y++) for (var x = 0; x < 16; x++) {
+    var f = 0.86 + hash2(x * 3.1, y * 1.7) * 0.28;
+    if (y < 5) {
+      var t = 1 - y / 5;
+      T.set(x, y, lerp(255, 255, t) * f, lerp(150, 232, t) * f, lerp(40, 150, t) * f);
+    } else if (y < 7) {
+      T.set(x, y, 236 * f, 128 * f, 44 * f);
+    } else {
+      T.set(x, y, 92 * f, 62 * f, 36 * f);
+      if (x === 4 || x === 11) T.mul(x, y, 0.7);
+    }
+  }
+}
+
 var PATTERNS = {
-  air: pat_air, brick: pat_brick, cobble: pat_cobble, planks: pat_planks, rough: pat_rough,
+  air: pat_air, torch: pat_torch, brick: pat_brick, cobble: pat_cobble, planks: pat_planks, rough: pat_rough,
   smooth: pat_smooth, sand: pat_sand, crystal: pat_crystal, glow: pat_glow,
   ice: pat_ice, glass: pat_glass
 };
@@ -667,6 +697,12 @@ var BLOCKS = [
   { key: 'redstone_lamp', name: 'Redstone Lamp', mc: 'minecraft:redstone_lamp', pattern: 'glow', base: [168, 92, 44], accent: [255, 180, 96], nodes: 8, em: 0.9 },
   { key: 'magma', name: 'Magma Block', mc: 'minecraft:magma', pattern: 'glow', base: [92, 40, 24], accent: [255, 138, 40], nodes: 12, em: 0.85 }
 ];
+
+/* not in the palette — placed with right-click, never exported */
+var TORCH_BLOCK = {
+  key: 'placed_torch', name: 'Torch', mc: 'minecraft:torch', pattern: 'torch',
+  base: [236, 150, 60], em: 1, alpha: 1, translucent: false, isAir: false
+};
 
 var BLOCK_INDEX = {};
 (function () {
@@ -1355,6 +1391,10 @@ var FS_VOXEL = [
   'uniform vec3 uBeaconPos;',
   'uniform vec3 uBeaconColor;',
   'uniform float uBeaconRange;',
+  'uniform vec3 uPtPos[8];',
+  'uniform vec3 uPtColor;',
+  'uniform float uPtRange;',
+  'uniform int uPtCount;',
   'varying vec3 vWorld;',
   'varying vec3 vNrm;',
   'varying vec2 vUV;',
@@ -1378,7 +1418,18 @@ var FS_VOXEL = [
   '  ab *= ab;',
   '  float ndb = max(abs(dot(n, toB / max(db, 0.0001))), 0.0);',
   '  vec3 beacon = uBeaconColor * (ab * (0.25 + 0.75 * ndb));',
-  '  vec3 lit = base * (uAmbient * sky + uEmissive * 1.45) + base * torch + base * beacon;',
+  '  vec3 pts = vec3(0.0);',
+  '  for (int i = 0; i < 8; i++) {',
+  '    if (i < uPtCount) {',
+  '      vec3 tp = uPtPos[i] - vWorld;',
+  '      float dl = length(tp);',
+  '      float al = clamp(1.0 - dl / uPtRange, 0.0, 1.0);',
+  '      al *= al;',
+  '      float nd = max(abs(dot(n, tp / max(dl, 0.0001))), 0.0);',
+  '      pts += uPtColor * (al * (0.28 + 0.72 * nd));',
+  '    }',
+  '  }',
+  '  vec3 lit = base * (uAmbient * sky + uEmissive * 1.45) + base * torch + base * beacon + base * pts;',
   '  float fog = clamp((dist - uFogNear) / max(uFogFar - uFogNear, 0.001), 0.0, 1.0);',
   '  gl_FragColor = vec4(mix(lit, uFogColor, fog), a);',
   '}'
@@ -1492,12 +1543,14 @@ function Renderer(canvas) {
   this.point = makeProgram(gl, VS_POINT, FS_POINT, ['aPos', 'aT']);
   this.bg = makeProgram(gl, VS_BG, FS_BG, ['aPos']);
 
+  this.voxel.u.uPtPos = gl.getUniformLocation(this.voxel.prog, 'uPtPos[0]');
+
   this.bgBuf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, this.bgBuf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
 
   this.textures = {};
-  for (var m = 1; m <= 4; m++) this.textures[m] = gl.createTexture();
+  for (var m = 1; m <= 5; m++) this.textures[m] = gl.createTexture();   // 5 = placed torch
   this.emissive = { 1: 0, 2: 0, 3: 0, 4: 0 };
   this.alpha = { 1: 1, 2: 1, 3: 1, 4: 1 };
   this.clear = { 1: false, 2: false, 3: false, 4: false };
@@ -1505,6 +1558,9 @@ function Renderer(canvas) {
   this.chunks = [];
   this.pathBuf = null;
   this.pathCount = 0;
+  this.torchVbo = null;
+  this.torchIbo = null;
+  this.torchCount = 0;
 
   this.mvp = new Float32Array(16);
   this.proj = new Float32Array(16);
@@ -1527,6 +1583,58 @@ Renderer.prototype.setBlockTexture = function (slot, def) {
   this.clear[slot] = !!def.translucent;
 };
 
+/* one small emissive box per placed torch, rebuilt whenever the set changes */
+Renderer.prototype.setTorches = function (list) {
+  var gl = this.gl;
+  if (this.torchVbo) { gl.deleteBuffer(this.torchVbo); gl.deleteBuffer(this.torchIbo); }
+  this.torchVbo = null; this.torchIbo = null; this.torchCount = 0;
+  if (!list || !list.length) return;
+
+  var n = Math.min(list.length, 2700);          // 4 verts * 6 faces stays under 65536
+  var hx = 0.09, hy = 0.24, hz = 0.09;
+  var P = new Float32Array(n * 24 * 8);
+  var I = new Uint16Array(n * 36);
+  var vp = 0, ip = 0, vbase = 0;
+
+  /* face order: +x -x +y -y +z -z, uv laid out so the flame sits on top */
+  var FACES = [
+    { n: [1, 0, 0], c: [[1, 0, 0], [1, 0, 1], [1, 1, 1], [1, 1, 0]] },
+    { n: [-1, 0, 0], c: [[0, 0, 1], [0, 0, 0], [0, 1, 0], [0, 1, 1]] },
+    { n: [0, 1, 0], c: [[0, 1, 0], [1, 1, 0], [1, 1, 1], [0, 1, 1]] },
+    { n: [0, -1, 0], c: [[0, 0, 1], [1, 0, 1], [1, 0, 0], [0, 0, 0]] },
+    { n: [0, 0, 1], c: [[1, 0, 1], [0, 0, 1], [0, 1, 1], [1, 1, 1]] },
+    { n: [0, 0, -1], c: [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]] }
+  ];
+
+  for (var t = 0; t < n; t++) {
+    var px = list[t][0], py = list[t][1], pz = list[t][2];
+    for (var f = 0; f < 6; f++) {
+      var F = FACES[f];
+      for (var k = 0; k < 4; k++) {
+        var c = F.c[k];
+        P[vp++] = px + (c[0] * 2 - 1) * hx;
+        P[vp++] = py + (c[1] * 2 - 1) * hy;
+        P[vp++] = pz + (c[2] * 2 - 1) * hz;
+        P[vp++] = F.n[0]; P[vp++] = F.n[1]; P[vp++] = F.n[2];
+        /* u across the face, v inverted so texture row 0 lands at the top */
+        P[vp++] = (F.n[1] !== 0) ? c[0] : (F.n[0] !== 0 ? c[2] : c[0]);
+        P[vp++] = (F.n[1] !== 0) ? c[2] : 1.0 - c[1];
+      }
+      I[ip++] = vbase; I[ip++] = vbase + 1; I[ip++] = vbase + 2;
+      I[ip++] = vbase; I[ip++] = vbase + 2; I[ip++] = vbase + 3;
+      vbase += 4;
+    }
+  }
+
+  this.torchVbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, this.torchVbo);
+  gl.bufferData(gl.ARRAY_BUFFER, P, gl.STATIC_DRAW);
+  this.torchIbo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.torchIbo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, I, gl.STATIC_DRAW);
+  this.torchCount = ip;
+};
+
 Renderer.prototype.anyTranslucent = function () {
   return this.clear[1] || this.clear[2] || this.clear[3] || this.clear[4];
 };
@@ -1543,6 +1651,8 @@ Renderer.prototype.disposeWorld = function () {
   this.chunks = [];
   if (this.pathBuf) { gl.deleteBuffer(this.pathBuf); this.pathBuf = null; }
   this.pathCount = 0;
+  if (this.torchVbo) { gl.deleteBuffer(this.torchVbo); gl.deleteBuffer(this.torchIbo); }
+  this.torchVbo = null; this.torchIbo = null; this.torchCount = 0;
 };
 
 Renderer.prototype.addChunk = function (cx, cy, cz, cs, geo) {
@@ -1682,6 +1792,10 @@ Renderer.prototype.render = function (cam, env) {
   gl.uniform3fv(V.u.uBeaconPos, env.beaconPos);
   gl.uniform3fv(V.u.uBeaconColor, env.beaconColor);
   gl.uniform1f(V.u.uBeaconRange, env.beaconRange);
+  gl.uniform3fv(V.u.uPtPos, env.ptPos);
+  gl.uniform3fv(V.u.uPtColor, env.ptColor);
+  gl.uniform1f(V.u.uPtRange, env.ptRange);
+  gl.uniform1i(V.u.uPtCount, env.ptCount);
   gl.uniform1i(V.u.uTex, 0);
   gl.activeTexture(gl.TEXTURE0);
 
@@ -1689,6 +1803,19 @@ Renderer.prototype.render = function (cam, env) {
   for (var m = 1; m <= 4; m++) (this.clear[m] ? clear : solid).push(m);
 
   var tris = this._drawGroups(vis, solid);
+
+  if (this.torchCount) {
+    gl.bindTexture(gl.TEXTURE_2D, this.textures[5]);
+    gl.uniform1f(V.u.uEmissive, 1.0);
+    gl.uniform1f(V.u.uAlpha, 1.0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.torchVbo);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 32, 0);
+    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 32, 12);
+    gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 32, 24);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.torchIbo);
+    gl.drawElements(gl.TRIANGLES, this.torchCount, gl.UNSIGNED_SHORT, 0);
+    tris += this.torchCount / 3;
+  }
 
   if (clear.length) {
     vis.sort(function (a, b) { return b.d2 - a.d2; });   // far to near
@@ -1778,6 +1905,7 @@ var S = {
   showPath: false, showMap: true, noclip: false, exportShell: true,
   ghost: { 1: false, 2: false, 3: false, 4: false },   // slots set to Air
   skip: [0, 0, 0, 0, 0],
+  torches: [], torchKeys: {}, torchesOn: true, torchLight: 1,
   entered: false, won: false, t0: 0, elapsed: 0,
   time: 0, shot: false, fps: 0
 };
@@ -1903,6 +2031,7 @@ function generate() {
     renderer.setPath(S.sol.path);
 
     queueChunks();
+    clearTorches();
     teleportToEntrance();
     updateStats();
   }, 30);
@@ -1924,6 +2053,7 @@ function rebuildGeometry() {
   if (!S.maze) return;
   renderer.disposeWorld();
   renderer.setPath(S.sol.path);
+  renderer.setTorches(S.torches);
   queueChunks();
   setProgress(0.12, 'Rebuilding geometry…');
 }
@@ -2000,6 +2130,96 @@ function doExport(kind) {
   }, 20);
 }
 
+/* ---------------- breadcrumb torches ----------------
+   Right-click drops a torch on the face you are looking at, the way
+   Minecraft places one. Web only — the exporter never sees these.   */
+var MAX_TORCHES = 900;
+var TORCH_REACH = 7;
+
+function torchKey(x, y, z) { return x + ',' + y + ',' + z; }
+
+function raycastCell(maxDist) {
+  var ox = S.pos[0], oy = S.pos[1], oz = S.pos[2];
+  var dx = camF[0], dy = camF[1], dz = camF[2];
+  var x = Math.floor(ox), y = Math.floor(oy), z = Math.floor(oz);
+  var lx = x, ly = y, lz = z;
+
+  var stepX = dx > 0 ? 1 : -1, stepY = dy > 0 ? 1 : -1, stepZ = dz > 0 ? 1 : -1;
+  var tdX = dx === 0 ? Infinity : Math.abs(1 / dx);
+  var tdY = dy === 0 ? Infinity : Math.abs(1 / dy);
+  var tdZ = dz === 0 ? Infinity : Math.abs(1 / dz);
+  var tmX = dx === 0 ? Infinity : (dx > 0 ? (x + 1 - ox) / dx : (x - ox) / dx);
+  var tmY = dy === 0 ? Infinity : (dy > 0 ? (y + 1 - oy) / dy : (y - oy) / dy);
+  var tmZ = dz === 0 ? Infinity : (dz > 0 ? (z + 1 - oz) / dz : (z - oz) / dz);
+
+  for (var guard = 0; guard < 256; guard++) {
+    if (solidAt(x, y, z)) return [lx, ly, lz];
+    lx = x; ly = y; lz = z;
+    var tNext = Math.min(tmX, tmY, tmZ);
+    if (!isFinite(tNext) || tNext > maxDist) break;
+    if (tNext === tmX) { x += stepX; tmX += tdX; }
+    else if (tNext === tmY) { y += stepY; tmY += tdY; }
+    else { z += stepZ; tmZ += tdZ; }
+  }
+  return [lx, ly, lz];   // nothing solid in reach — leave it floating where the ray ended
+}
+
+function placeTorch() {
+  if (!S.torchesOn || !S.maze || S.building) return;
+  var c = raycastCell(TORCH_REACH);
+  var d = S.maze.dim;
+  if (c[0] < -2 || c[1] < -2 || c[2] < -2 || c[0] > d + 1 || c[1] > d + 1 || c[2] > d + 1) return;
+  if (solidAt(c[0], c[1], c[2])) return;
+
+  var key = torchKey(c[0], c[1], c[2]);
+  if (S.torchKeys[key]) {                       // right-click an existing torch to take it back
+    delete S.torchKeys[key];
+    for (var i = 0; i < S.torches.length; i++) {
+      if (S.torches[i][3] === key) { S.torches.splice(i, 1); break; }
+    }
+  } else {
+    S.torches.push([c[0] + 0.5, c[1] + 0.5, c[2] + 0.5, key]);
+    S.torchKeys[key] = 1;
+    if (S.torches.length > MAX_TORCHES) {
+      var old = S.torches.shift();
+      delete S.torchKeys[old[3]];
+    }
+  }
+  renderer.setTorches(S.torches);
+  $('torchCount').textContent = S.torches.length + (S.torches.length === 1 ? ' torch' : ' torches');
+}
+
+function clearTorches() {
+  S.torches = []; S.torchKeys = {};
+  renderer.setTorches(S.torches);
+  $('torchCount').textContent = '0 torches';
+}
+
+/* the eight nearest torches light the scene; the rest are just markers */
+var PT_POS = new Float32Array(24);
+function gatherLights() {
+  var best = [], n = S.torches.length;
+  for (var i = 0; i < n; i++) {
+    var t = S.torches[i];
+    var dx = t[0] - S.pos[0], dy = t[1] - S.pos[1], dz = t[2] - S.pos[2];
+    var d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > 900) continue;
+    if (best.length < 8) {
+      best.push([d2, t]);
+      if (best.length === 8) best.sort(function (a, b) { return a[0] - b[0]; });
+    } else if (d2 < best[7][0]) {
+      best[7] = [d2, t];
+      best.sort(function (a, b) { return a[0] - b[0]; });
+    }
+  }
+  for (var k = 0; k < best.length; k++) {
+    PT_POS[k * 3] = best[k][1][0];
+    PT_POS[k * 3 + 1] = best[k][1][1];
+    PT_POS[k * 3 + 2] = best[k][1][2];
+  }
+  return best.length;
+}
+
 /* ---------------- collision ---------------- */
 var RAD = 0.3;
 function solidAt(x, y, z) {
@@ -2045,6 +2265,10 @@ function updateBasis() {
 canvas.addEventListener('click', function () {
   if (!S.locked) canvas.requestPointerLock();
 });
+canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+canvas.addEventListener('mousedown', function (e) {
+  if (e.button === 2 && S.locked) { e.preventDefault(); placeTorch(); }
+});
 document.addEventListener('pointerlockchange', function () {
   S.locked = document.pointerLockElement === canvas;
   $('overlay').style.display = S.locked ? 'none' : 'flex';
@@ -2063,6 +2287,8 @@ document.addEventListener('keydown', function (e) {
   if (e.code === 'KeyM') { S.showMap = !S.showMap; $('tglMap').checked = S.showMap; applyMap(); }
   if (e.code === 'KeyN') S.noclip = !S.noclip;
   if (e.code === 'KeyR') teleportToEntrance();
+  if (e.code === 'KeyF') placeTorch();
+  if (e.code === 'KeyC') clearTorches();
   if (e.code === 'Tab') { e.preventDefault(); $('panel').classList.toggle('hidden'); }
   if (e.code === 'Space') e.preventDefault();
 });
@@ -2098,6 +2324,14 @@ function drawMinimap() {
       var ii = (Math.floor(p[2]) * dim + Math.floor(p[0])) * 4;
       d[ii] = 255; d[ii + 1] = 208; d[ii + 2] = 96;
     }
+  }
+  for (var ti = 0; ti < S.torches.length; ti++) {
+    var tt = S.torches[ti];
+    if (Math.floor(tt[1]) !== y) continue;
+    var tx = Math.floor(tt[0]), tz = Math.floor(tt[2]);
+    if (tx < 0 || tz < 0 || tx >= dim || tz >= dim) continue;
+    var tI = (tz * dim + tx) * 4;
+    d[tI] = 255; d[tI + 1] = 168; d[tI + 2] = 72;
   }
   sliceCtx.putImageData(img, 0, 0);
 
@@ -2180,7 +2414,9 @@ var env = {
   beaconPos: new Float32Array([0, 0, 0]), beaconColor: new Float32Array([0.16, 0.5, 0.48]), beaconRange: 26,
   skyTop: new Float32Array([0.055, 0.07, 0.11]), skyBottom: new Float32Array([0.015, 0.02, 0.03]),
   pathColorA: new Float32Array([1.0, 0.72, 0.22]), pathColorB: new Float32Array([1.0, 0.95, 0.65]),
-  showPath: false, cullDistance: 1e9, time: 0
+  showPath: false, cullDistance: 1e9, time: 0,
+  ptPos: PT_POS, ptCount: 0, ptRange: 11,
+  ptColor: new Float32Array([0.55, 0.36, 0.15])
 };
 
 /* 0 outside the cube, 1 once well inside — blended so light and view
@@ -2246,6 +2482,10 @@ function frame(now) {
   }
   env.showPath = S.showPath;
   env.time = S.time;
+  env.ptCount = gatherLights();
+  env.ptColor[0] = 0.55 * S.torchLight;
+  env.ptColor[1] = 0.36 * S.torchLight;
+  env.ptColor[2] = 0.15 * S.torchLight;
   /* see-through walls need the whole cube drawn, not just the near shell */
   env.cullDistance = (inside >= 1 && !renderer.anyTranslucent()) ? env.fogFar + 20 : 1e9;
 
@@ -2316,6 +2556,11 @@ bindRange('beacon', 'beaconOut', function () { return S.beacon; }, function (v) 
 bindRange('speed', 'speedOut', function () { return S.speed; }, function (v) { S.speed = v; },
   function (v) { return v.toFixed(1) + ' blocks/s'; });
 
+$('tglTorch').onchange = function () { S.torchesOn = this.checked; };
+$('clearTorch').onclick = function () { clearTorches(); };
+bindRange('torchGlow', 'torchGlowOut', function () { return S.torchLight; },
+  function (v) { S.torchLight = v; },
+  function (v) { return v === 0 ? 'markers only' : Math.round(v * 100) + '%'; });
 $('tglPath').onchange = function () { S.showPath = this.checked; };
 $('tglMap').onchange = function () { S.showMap = this.checked; applyMap(); };
 $('tglShell').onchange = function () { S.exportShell = this.checked; };
@@ -2332,6 +2577,7 @@ buildPalette();
 corrUI();
 applyMap();
 for (var s = 1; s <= 4; s++) renderer.setBlockTexture(s, BLOCKS[S.blocks[s]]);
+renderer.setBlockTexture(5, TORCH_BLOCK);
 syncGhosts();
 generate();
 requestAnimationFrame(frame);
