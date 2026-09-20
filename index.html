@@ -203,6 +203,11 @@
         <button class="btn" id="reseed" title="New random seed and regenerate">↻</button>
       </span>
     </div>
+    <div class="row"><label>Shape</label></div>
+    <div class="seg" style="margin-bottom:10px">
+      <button class="btn" id="shapeCube">Cube</button>
+      <button class="btn" id="shapePlane">Plane</button>
+    </div>
     <div class="row"><label>Corridor width</label></div>
     <div class="seg" style="margin-bottom:10px">
       <button class="btn" id="corr1">1 block</button>
@@ -232,13 +237,16 @@
   </div>
 
   <div class="group">
-    <div class="glabel">Send to Minecraft</div>
+    <div class="glabel">Export</div>
     <label class="check"><input type="checkbox" id="tglShell" checked> Include the outer shell</label>
     <div class="seg">
       <button class="btn" id="expStructure">.mcstructure</button>
       <button class="btn" id="expPack">.mcpack</button>
     </div>
-    <div id="exportNote">Bedrock Edition. The pack drops straight into the game; the bare structure file is for a structure block.</div>
+    <div class="seg" style="margin-top:6px">
+      <button class="btn" id="expObj" style="flex:1">OBJ + textures (.zip)</button>
+    </div>
+    <div id="exportNote">Bedrock Edition. The pack drops straight into the game; the bare structure file is for a structure block. OBJ carries the merged mesh with UVs and PNG textures.</div>
   </div>
 
   <div class="group">
@@ -283,7 +291,7 @@
 /* ============================================================
    Mazecraft — core math / rng
    ============================================================ */
-var MZ_VERSION = '1.3.0';
+var MZ_VERSION = '1.4.0';
 
 function mulberry32(a) {
   a = a | 0;
@@ -743,8 +751,11 @@ function makeBlockTexture(def) {
 
 /* ---- 30-maze.js ---- */
 /* ============================================================
-   Mazecraft — 3D maze generation
+   Mazecraft — maze generation on a box-shaped cell lattice
    Materials: 0 air, 1 wall, 2 shell, 3 entrance frame, 4 exit frame
+
+   Dimensions are per-axis so the same code builds a cube
+   (layers === cells) or a flat plane (layers === 1).
    ============================================================ */
 var MAT_AIR = 0, MAT_WALL = 1, MAT_SHELL = 2, MAT_ENTRY = 3, MAT_EXIT = 4;
 
@@ -755,16 +766,19 @@ var DIRS = [
 ];
 
 function buildMaze(opts) {
-  var C = opts.cells | 0;                 // cells per axis
-  var W = opts.corridor | 0;              // corridor width in blocks (1 or 2)
-  var P = W + 1;                          // cell pitch
-  var dim = C * P + 1;                    // blocks per axis
+  var C = opts.cells | 0;                        // cells along X and Z
+  var L = Math.max(1, opts.layers | 0);          // cells along Y — 1 makes it flat
+  var W = opts.corridor | 0;                     // corridor width in blocks
+  var P = W + 1;                                 // cell pitch
+  var cells = [C, L, C];
+  var dims = [C * P + 1, L * P + 1, C * P + 1];
+  var dx = dims[0], dy = dims[1], dz = dims[2];
   var rnd = mulberry32(opts.seed | 0);
 
-  var grid = new Uint8Array(dim * dim * dim);
+  var grid = new Uint8Array(dx * dy * dz);
   grid.fill(MAT_WALL);
 
-  function gi(x, y, z) { return x + dim * (y + dim * z); }
+  function gi(x, y, z) { return x + dx * (y + dy * z); }
 
   function carveCell(cx, cy, cz) {
     var bx = cx * P + 1, by = cy * P + 1, bz = cz * P + 1;
@@ -774,8 +788,8 @@ function buildMaze(opts) {
           grid[gi(bx + x, by + y, bz + z)] = MAT_AIR;
   }
 
+  /* open the wall plane between a cell and its neighbour in direction d */
   function carveWall(cx, cy, cz, d) {
-    // wall plane between cell (cx,cy,cz) and its neighbour in direction d
     var dir = DIRS[d];
     var ax = dir[0] !== 0 ? 0 : (dir[1] !== 0 ? 1 : 2);
     var base = [cx * P + 1, cy * P + 1, cz * P + 1];
@@ -790,10 +804,22 @@ function buildMaze(opts) {
     }
   }
 
+  function wallOpen(cx, cy, cz, d) {
+    var dir = DIRS[d];
+    var ax = dir[0] !== 0 ? 0 : (dir[1] !== 0 ? 1 : 2);
+    var p = [cx * P + 1, cy * P + 1, cz * P + 1];
+    p[ax] = [cx, cy, cz][ax] * P + (dir[ax] > 0 ? P : 0);
+    return grid[gi(p[0], p[1], p[2])] === MAT_AIR;
+  }
+
+  function inCells(x, y, z) {
+    return x >= 0 && y >= 0 && z >= 0 && x < cells[0] && y < cells[1] && z < cells[2];
+  }
+
   /* ---- recursive backtracker over the cell lattice ---- */
-  var nCells = C * C * C;
+  var nCells = cells[0] * cells[1] * cells[2];
   var visited = new Uint8Array(nCells);
-  var ci = function (x, y, z) { return x + C * (y + C * z); };
+  var ci = function (x, y, z) { return x + cells[0] * (y + cells[1] * z); };
   var stack = new Int32Array(nCells);
   var sp = 0;
   var order = [0, 1, 2, 3, 4, 5];
@@ -805,9 +831,10 @@ function buildMaze(opts) {
 
   while (sp > 0) {
     var cur = stack[sp - 1];
-    var cx = cur % C, cy = ((cur / C) | 0) % C, cz = (cur / (C * C)) | 0;
+    var cx = cur % cells[0];
+    var cy = ((cur / cells[0]) | 0) % cells[1];
+    var cz = (cur / (cells[0] * cells[1])) | 0;
 
-    // shuffle direction order
     for (var k = 5; k > 0; k--) {
       var r = (rnd() * (k + 1)) | 0;
       var t = order[k]; order[k] = order[r]; order[r] = t;
@@ -817,7 +844,7 @@ function buildMaze(opts) {
     for (var q = 0; q < 6; q++) {
       var d = order[q], dir = DIRS[d];
       var nx = cx + dir[0], ny = cy + dir[1], nz = cz + dir[2];
-      if (nx < 0 || ny < 0 || nz < 0 || nx >= C || ny >= C || nz >= C) continue;
+      if (!inCells(nx, ny, nz)) continue;
       var n = ci(nx, ny, nz);
       if (visited[n]) continue;
       visited[n] = 1;
@@ -831,49 +858,40 @@ function buildMaze(opts) {
     if (!moved) sp--;
   }
 
-  /* ---- optional braiding: remove some dead ends to add loops ---- */
+  /* ---- optional braiding: open some dead ends into loops ---- */
   var braid = opts.braid || 0;
   if (braid > 0) {
-    for (var cz2 = 0; cz2 < C; cz2++)
-      for (var cy2 = 0; cy2 < C; cy2++)
-        for (var cx2 = 0; cx2 < C; cx2++) {
+    for (var bz = 0; bz < cells[2]; bz++)
+      for (var by = 0; by < cells[1]; by++)
+        for (var bx = 0; bx < cells[0]; bx++) {
           if (rnd() > braid) continue;
-          // count open faces
           var open = 0, closed = [];
           for (var d2 = 0; d2 < 6; d2++) {
             var dr = DIRS[d2];
-            var mx = cx2 + dr[0], my = cy2 + dr[1], mz = cz2 + dr[2];
-            if (mx < 0 || my < 0 || mz < 0 || mx >= C || my >= C || mz >= C) continue;
-            var ax2 = dr[0] !== 0 ? 0 : (dr[1] !== 0 ? 1 : 2);
-            var pl = [cx2, cy2, cz2][ax2] * P + (dr[ax2] > 0 ? P : 0);
-            var pp = [cx2 * P + 1, cy2 * P + 1, cz2 * P + 1];
-            pp[ax2] = pl;
-            if (grid[gi(pp[0], pp[1], pp[2])] === MAT_AIR) open++; else closed.push(d2);
+            if (!inCells(bx + dr[0], by + dr[1], bz + dr[2])) continue;
+            if (wallOpen(bx, by, bz, d2)) open++; else closed.push(d2);
           }
-          if (open === 1 && closed.length) {
-            carveWall(cx2, cy2, cz2, closed[(rnd() * closed.length) | 0]);
-          }
+          if (open === 1 && closed.length) carveWall(bx, by, bz, closed[(rnd() * closed.length) | 0]);
         }
   }
 
   /* ---- shell ---- */
-  for (var z = 0; z < dim; z++)
-    for (var y = 0; y < dim; y++)
-      for (var x = 0; x < dim; x++) {
-        if (x === 0 || y === 0 || z === 0 || x === dim - 1 || y === dim - 1 || z === dim - 1) {
-          var i2 = gi(x, y, z);
+  for (var z2 = 0; z2 < dz; z2++)
+    for (var y2 = 0; y2 < dy; y2++)
+      for (var x2 = 0; x2 < dx; x2++) {
+        if (x2 === 0 || y2 === 0 || z2 === 0 || x2 === dx - 1 || y2 === dy - 1 || z2 === dz - 1) {
+          var i2 = gi(x2, y2, z2);
           if (grid[i2] !== MAT_AIR) grid[i2] = MAT_SHELL;
         }
       }
 
-  /* ---- the two doors ---- */
-  function openDoor(planeX, cy, cz, mat) {
-    var by = cy * P + 1, bz = cz * P + 1;
-    var lo = -1, hi = W;
-    for (var j = lo; j <= hi; j++)
-      for (var i = lo; i <= hi; i++) {
-        var yy = by + j, zz = bz + i;
-        if (yy < 0 || zz < 0 || yy >= dim || zz >= dim) continue;
+  /* ---- the two doors, on the -X and +X faces ---- */
+  function openDoor(planeX, cy2, cz2, mat) {
+    var by2 = cy2 * P + 1, bz2 = cz2 * P + 1;
+    for (var j = -1; j <= W; j++)
+      for (var i = -1; i <= W; i++) {
+        var yy = by2 + j, zz = bz2 + i;
+        if (yy < 0 || zz < 0 || yy >= dy || zz >= dz) continue;
         var inside = (j >= 0 && j < W && i >= 0 && i < W);
         var id = gi(planeX, yy, zz);
         if (inside) grid[id] = MAT_AIR;
@@ -882,33 +900,35 @@ function buildMaze(opts) {
   }
 
   var entryCell = [0, 0, 0];
-  var exitCell = [C - 1, C - 1, C - 1];
+  var exitCell = [cells[0] - 1, cells[1] - 1, cells[2] - 1];
   openDoor(0, entryCell[1], entryCell[2], MAT_ENTRY);
-  openDoor(dim - 1, exitCell[1], exitCell[2], MAT_EXIT);
+  openDoor(dx - 1, exitCell[1], exitCell[2], MAT_EXIT);
 
   var half = (W - 1) * 0.5;
   var entryPos = [0.5, entryCell[1] * P + 1 + half + 0.5, entryCell[2] * P + 1 + half + 0.5];
-  var exitPos = [dim - 0.5, exitCell[1] * P + 1 + half + 0.5, exitCell[2] * P + 1 + half + 0.5];
+  var exitPos = [dx - 0.5, exitCell[1] * P + 1 + half + 0.5, exitCell[2] * P + 1 + half + 0.5];
 
   return {
-    dim: dim, cells: C, corridor: W, pitch: P, grid: grid,
-    seed: opts.seed, carvedCells: carvedCells,
+    dims: dims, cells: cells, corridor: W, pitch: P, grid: grid,
+    flat: L === 1, seed: opts.seed, carvedCells: carvedCells,
+    blocks: dx * dy * dz,
     entryPos: entryPos, exitPos: exitPos,
     entryBlock: [0, Math.floor(entryPos[1]), Math.floor(entryPos[2])],
-    exitBlock: [dim - 1, Math.floor(exitPos[1]), Math.floor(exitPos[2])]
+    exitBlock: [dx - 1, Math.floor(exitPos[1]), Math.floor(exitPos[2])]
   };
 }
 
 /* ---- BFS from the exit: distance field + solution path ---- */
 function solveMaze(m) {
-  var dim = m.dim, grid = m.grid;
-  var n = dim * dim * dim;
+  var dims = m.dims, grid = m.grid;
+  var dx = dims[0], dy = dims[1], dz = dims[2];
+  var n = dx * dy * dz;
   var dist = new Int32Array(n);
   dist.fill(-1);
   var queue = new Int32Array(n);
   var head = 0, tail = 0;
 
-  function gi(x, y, z) { return x + dim * (y + dim * z); }
+  function gi(x, y, z) { return x + dx * (y + dy * z); }
 
   var start = gi(m.exitBlock[0], m.exitBlock[1], m.exitBlock[2]);
   dist[start] = 0;
@@ -916,12 +936,12 @@ function solveMaze(m) {
 
   while (head < tail) {
     var cur = queue[head++];
-    var x = cur % dim, y = ((cur / dim) | 0) % dim, z = (cur / (dim * dim)) | 0;
+    var x = cur % dx, y = ((cur / dx) | 0) % dy, z = (cur / (dx * dy)) | 0;
     var dcur = dist[cur];
     for (var d = 0; d < 6; d++) {
       var dir = DIRS[d];
       var nx = x + dir[0], ny = y + dir[1], nz = z + dir[2];
-      if (nx < 0 || ny < 0 || nz < 0 || nx >= dim || ny >= dim || nz >= dim) continue;
+      if (nx < 0 || ny < 0 || nz < 0 || nx >= dx || ny >= dy || nz >= dz) continue;
       var ni = gi(nx, ny, nz);
       if (grid[ni] !== MAT_AIR || dist[ni] >= 0) continue;
       dist[ni] = dcur + 1;
@@ -929,20 +949,18 @@ function solveMaze(m) {
     }
   }
 
-  // walk downhill from entrance to exit
   var path = [];
-  var ex = m.entryBlock[0], ey = m.entryBlock[1], ez = m.entryBlock[2];
-  var cur2 = gi(ex, ey, ez);
-  var solvable = dist[cur2] >= 0;
+  var cx = m.entryBlock[0], cy = m.entryBlock[1], cz = m.entryBlock[2];
+  var solvable = dist[gi(cx, cy, cz)] >= 0;
   if (solvable) {
-    var cx = ex, cy = ey, cz = ez, guard = 0;
+    var guard = 0;
     while (dist[gi(cx, cy, cz)] > 0 && guard++ < n) {
       path.push([cx + 0.5, cy + 0.5, cz + 0.5]);
       var best = -1, bd = dist[gi(cx, cy, cz)];
       for (var d2 = 0; d2 < 6; d2++) {
         var dr = DIRS[d2];
         var nx2 = cx + dr[0], ny2 = cy + dr[1], nz2 = cz + dr[2];
-        if (nx2 < 0 || ny2 < 0 || nz2 < 0 || nx2 >= dim || ny2 >= dim || nz2 >= dim) continue;
+        if (nx2 < 0 || ny2 < 0 || nz2 < 0 || nx2 >= dx || ny2 >= dy || nz2 >= dz) continue;
         var dd = dist[gi(nx2, ny2, nz2)];
         if (dd >= 0 && dd < bd) { bd = dd; best = d2; }
       }
@@ -960,6 +978,7 @@ function solveMaze(m) {
 /* ============================================================
    Mazecraft — greedy voxel mesher
    Emits merged, texture-repeating quads for every solid/air face.
+   dims is [dx, dy, dz] so non-cubic worlds mesh the same way.
    ============================================================ */
 var CHUNK = 16;
 var AXIS_U = [1, 2, 0];
@@ -967,23 +986,22 @@ var AXIS_V = [2, 0, 1];
 
 /*
   emitQuad(mat, d, s, base, ui, vj, w, h)
-    d    : axis of the face normal (0=x,1=y,2=z)
+    d    : axis of the face normal (0=x, 1=y, 2=z)
     s    : +1 / -1 sign of the normal
     base : voxel coordinate along d
     ui,vj: quad origin along axes AXIS_U[d] / AXIS_V[d]
     w,h  : quad extent along u / v
+  skip   : optional per-material mask; a listed material is treated as air
 */
-function meshChunk(grid, dim, ox, oy, oz, cs, emitQuad, skip) {
+function meshChunk(grid, dims, ox, oy, oz, cs, emitQuad, skip) {
+  var dx = dims[0], dy = dims[1], dz = dims[2];
   var mask = new Int32Array(cs * cs);
   var pos = [0, 0, 0], nb = [0, 0, 0];
   var origin = [ox, oy, oz];
 
-  /* a material listed in skip is treated as if it were air, so choosing
-     Air for a slot removes those blocks from the world entirely rather
-     than drawing them invisible */
   function at(x, y, z) {
-    if (x < 0 || y < 0 || z < 0 || x >= dim || y >= dim || z >= dim) return 0;
-    var m = grid[x + dim * (y + dim * z)];
+    if (x < 0 || y < 0 || z < 0 || x >= dx || y >= dy || z >= dz) return 0;
+    var m = grid[x + dx * (y + dy * z)];
     return (skip && skip[m]) ? 0 : m;
   }
 
@@ -992,16 +1010,16 @@ function meshChunk(grid, dim, ox, oy, oz, cs, emitQuad, skip) {
     for (var s = -1; s <= 1; s += 2) {
       for (var a = 0; a < cs; a++) {
         var base = origin[d] + a;
-        if (base >= dim) break;
+        if (base >= dims[d]) break;
         mask.fill(0);
         var any = false;
 
         for (var j = 0; j < cs; j++) {
           var vv = origin[v] + j;
-          if (vv >= dim) break;
+          if (vv >= dims[v]) break;
           for (var i = 0; i < cs; i++) {
             var uu = origin[u] + i;
-            if (uu >= dim) break;
+            if (uu >= dims[u]) break;
             pos[d] = base; pos[u] = uu; pos[v] = vv;
             var m = at(pos[0], pos[1], pos[2]);
             if (m === 0) continue;
@@ -1047,17 +1065,32 @@ function faceUV(d, x, y, z, out) {
   else { out[0] = x; out[1] = -y; }
 }
 
+/* the four corners of a quad, wound counter-clockwise from the outside */
+function quadCorners(d, s, base, ui, vj, w, h, out) {
+  var u = AXIS_U[d], v = AXIS_V[d];
+  var face = base + (s > 0 ? 1 : 0);
+  var c = [[ui, vj], [ui + w, vj], [ui + w, vj + h], [ui, vj + h]];
+  var ord = s > 0 ? [0, 1, 2, 3] : [0, 3, 2, 1];
+  for (var t = 0; t < 4; t++) {
+    var cc = c[ord[t]];
+    var p = out[t];
+    p[d] = face; p[u] = cc[0]; p[v] = cc[1];
+  }
+  return out;
+}
+
 /* Build interleaved vertex data (pos3, nrm3, uv2) for one chunk,
    grouped by material and split so index buffers stay 16-bit safe. */
 var VERT_LIMIT = 65532;
 
-function buildChunkGeometry(grid, dim, cx, cy, cz, cs, skip) {
-  var groups = {};          // mat -> { batches:[], P:[], I:[], v:0 }
+function buildChunkGeometry(grid, dims, cx, cy, cz, cs, skip) {
+  var groups = {};
   var uv = [0, 0];
+  var corners = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]];
 
   function grp(m) {
     var g = groups[m];
-    if (!g) { g = groups[m] = { batches: [], P: [], I: [], v: 0 }; }
+    if (!g) g = groups[m] = { batches: [], P: [], I: [], v: 0 };
     return g;
   }
   function flush(g) {
@@ -1066,20 +1099,15 @@ function buildChunkGeometry(grid, dim, cx, cy, cz, cs, skip) {
     g.P.length = 0; g.I.length = 0; g.v = 0;
   }
 
-  meshChunk(grid, dim, cx * cs, cy * cs, cz * cs, cs, function (m, d, s, base, ui, vj, w, h) {
+  meshChunk(grid, dims, cx * cs, cy * cs, cz * cs, cs, function (m, d, s, base, ui, vj, w, h) {
     var g = grp(m);
     if (g.v + 4 > VERT_LIMIT) flush(g);
 
-    var u = AXIS_U[d], v = AXIS_V[d];
-    var face = base + (s > 0 ? 1 : 0);
-    var c = [[ui, vj], [ui + w, vj], [ui + w, vj + h], [ui, vj + h]];
-    var ord = s > 0 ? [0, 1, 2, 3] : [0, 3, 2, 1];
+    quadCorners(d, s, base, ui, vj, w, h, corners);
     var nx = d === 0 ? s : 0, ny = d === 1 ? s : 0, nz = d === 2 ? s : 0;
-    var p = [0, 0, 0];
 
     for (var t = 0; t < 4; t++) {
-      var cc = c[ord[t]];
-      p[d] = face; p[u] = cc[0]; p[v] = cc[1];
+      var p = corners[t];
       faceUV(d, p[0], p[1], p[2], uv);
       g.P.push(p[0], p[1], p[2], nx, ny, nz, uv[0], uv[1]);
     }
@@ -1154,8 +1182,9 @@ NBT.prototype.bytes = function () { return new Uint8Array(this.buf, 0, this.p); 
 */
 function buildMcStructure(maze, blockFor, opts) {
   opts = opts || {};
-  var dim = maze.dim, grid = maze.grid;
-  var n = dim * dim * dim;
+  var dims = maze.dims, grid = maze.grid;
+  var dx = dims[0], dy = dims[1], dz = dims[2];
+  var n = dx * dy * dz;
 
   /* palette: air first, then one entry per distinct block id in use */
   var palette = ['minecraft:air'];
@@ -1171,10 +1200,10 @@ function buildMcStructure(maze, blockFor, opts) {
   /* block_indices, ordered x -> y -> z with z varying fastest */
   var idx = new Int32Array(n);
   var w = 0;
-  for (var x = 0; x < dim; x++) {
-    for (var y = 0; y < dim; y++) {
-      for (var z = 0; z < dim; z++) {
-        idx[w++] = matToPal[grid[x + dim * (y + dim * z)]];
+  for (var x = 0; x < dx; x++) {
+    for (var y = 0; y < dy; y++) {
+      for (var z = 0; z < dz; z++) {
+        idx[w++] = matToPal[grid[x + dx * (y + dy * z)]];
       }
     }
   }
@@ -1184,7 +1213,7 @@ function buildMcStructure(maze, blockFor, opts) {
 
   b.compound('');                                   // root
   b.tagInt('format_version', 1);
-  b.tagIntList('size', [dim, dim, dim]);
+  b.tagIntList('size', [dx, dy, dz]);
 
   b.compound('structure');
     b.listHead('block_indices', 9, 2);              // list of two int lists
@@ -1210,7 +1239,7 @@ function buildMcStructure(maze, blockFor, opts) {
   b.tagIntList('structure_world_origin', [0, 0, 0]);
   b.end();                                          // root
 
-  return { bytes: b.bytes(), palette: palette, blocks: n, size: dim };
+  return { bytes: b.bytes(), palette: palette, blocks: n, size: dims.slice() };
 }
 
 /* ---------------- store-only ZIP ---------------- */
@@ -1350,6 +1379,195 @@ function downloadBytes(bytes, filename) {
   a.download = filename;
   a.click();
   setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+}
+
+
+/* ---- 47-obj.js ---- */
+/* ============================================================
+   Mazecraft — Wavefront OBJ export
+   Writes the merged greedy mesh as OBJ + MTL, with the procedural
+   block textures encoded as PNGs, all packed into one zip.
+   No dependencies: the PNG writer uses stored deflate blocks.
+   ============================================================ */
+
+/* ---------------- PNG ---------------- */
+function adler32(data) {
+  var a = 1, b = 0;
+  for (var i = 0; i < data.length; i++) {
+    a = (a + data[i]) % 65521;
+    b = (b + a) % 65521;
+  }
+  return ((b << 16) | a) >>> 0;
+}
+
+function zlibStore(raw) {
+  var blocks = Math.max(1, Math.ceil(raw.length / 65535));
+  var out = new Uint8Array(2 + blocks * 5 + raw.length + 4);
+  var p = 0;
+  out[p++] = 0x78; out[p++] = 0x01;          // zlib header, no compression
+  for (var i = 0; i < blocks; i++) {
+    var off = i * 65535;
+    var len = Math.min(65535, raw.length - off);
+    out[p++] = (i === blocks - 1) ? 1 : 0;   // final-block flag, stored
+    out[p++] = len & 0xFF; out[p++] = (len >> 8) & 0xFF;
+    out[p++] = ~len & 0xFF; out[p++] = (~len >> 8) & 0xFF;
+    out.set(raw.subarray(off, off + len), p);
+    p += len;
+  }
+  var ad = adler32(raw);
+  out[p++] = (ad >>> 24) & 0xFF; out[p++] = (ad >>> 16) & 0xFF;
+  out[p++] = (ad >>> 8) & 0xFF; out[p++] = ad & 0xFF;
+  return out.subarray(0, p);
+}
+
+function pngChunk(type, data) {
+  var out = new Uint8Array(12 + data.length);
+  var dv = new DataView(out.buffer);
+  dv.setUint32(0, data.length, false);
+  for (var i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+  out.set(data, 8);
+  dv.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)), false);
+  return out;
+}
+
+/* rgba: Uint8ClampedArray or Uint8Array, width*height*4 */
+function pngEncode(width, height, rgba) {
+  var raw = new Uint8Array(height * (1 + width * 4));
+  var p = 0;
+  for (var y = 0; y < height; y++) {
+    raw[p++] = 0;                              // filter: none
+    for (var x = 0; x < width * 4; x++) raw[p++] = rgba[y * width * 4 + x];
+  }
+
+  var ihdr = new Uint8Array(13);
+  var dv = new DataView(ihdr.buffer);
+  dv.setUint32(0, width, false);
+  dv.setUint32(4, height, false);
+  ihdr[8] = 8;    // bit depth
+  ihdr[9] = 6;    // colour type: RGBA
+  ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+
+  var sig = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  var parts = [sig, pngChunk('IHDR', ihdr), pngChunk('IDAT', zlibStore(raw)), pngChunk('IEND', new Uint8Array(0))];
+  var total = 0;
+  for (var i = 0; i < parts.length; i++) total += parts[i].length;
+  var out = new Uint8Array(total), q = 0;
+  for (var j = 0; j < parts.length; j++) { out.set(parts[j], q); q += parts[j].length; }
+  return out;
+}
+
+/* ---------------- OBJ ---------------- */
+var OBJ_NORMALS = [
+  [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]
+];
+
+/* OBJ texture space has v running upward, so flip against the GL layout */
+function objUV(d, x, y, z, out) {
+  if (d === 0) { out[0] = z; out[1] = y; }
+  else if (d === 1) { out[0] = x; out[1] = z; }
+  else { out[0] = x; out[1] = y; }
+}
+
+function averageColor(T) {
+  var r = 0, g = 0, b = 0, n = 0;
+  for (var i = 0; i < T.d.length; i += 4) {
+    var a = T.d[i + 3] / 255;
+    r += T.d[i] * a; g += T.d[i + 1] * a; b += T.d[i + 2] * a; n += a;
+  }
+  n = Math.max(n, 1);
+  return [r / n / 255, g / n / 255, b / n / 255];
+}
+
+var OBJ_MAT_NAMES = { 1: 'walls', 2: 'shell', 3: 'entrance', 4: 'exit' };
+
+/*
+  maze      : result of buildMaze
+  defs      : { 1: blockDef, 2: blockDef, 3: blockDef, 4: blockDef }
+  skip      : per-material mask (Air slots)
+  name      : base file name
+  returns   : { files: [{name, data}], stats: {...} }
+*/
+function buildOBJ(maze, defs, skip, name) {
+  var dims = maze.dims;
+  var nc = [Math.ceil(dims[0] / CHUNK), Math.ceil(dims[1] / CHUNK), Math.ceil(dims[2] / CHUNK)];
+
+  var V = [], VT = [], faces = {}, used = {};
+  var corners = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  var uv = [0, 0];
+  var vi = 1, quads = 0;
+
+  for (var cz = 0; cz < nc[2]; cz++) {
+    for (var cy = 0; cy < nc[1]; cy++) {
+      for (var cx = 0; cx < nc[0]; cx++) {
+        meshChunk(maze.grid, dims, cx * CHUNK, cy * CHUNK, cz * CHUNK, CHUNK,
+          function (m, d, s, base, ui, vj, w, h) {
+            quadCorners(d, s, base, ui, vj, w, h, corners);
+            var ni = d * 2 + (s > 0 ? 1 : 2) - 1;   // index into OBJ_NORMALS, 0-based
+            var a = vi;
+            for (var t = 0; t < 4; t++) {
+              var p = corners[t];
+              V.push('v ' + p[0] + ' ' + p[1] + ' ' + p[2]);
+              objUV(d, p[0], p[1], p[2], uv);
+              VT.push('vt ' + uv[0] + ' ' + uv[1]);
+              vi++;
+            }
+            var n1 = ni + 1;
+            if (!faces[m]) faces[m] = [];
+            faces[m].push('f ' +
+              a + '/' + a + '/' + n1 + ' ' +
+              (a + 1) + '/' + (a + 1) + '/' + n1 + ' ' +
+              (a + 2) + '/' + (a + 2) + '/' + n1 + ' ' +
+              (a + 3) + '/' + (a + 3) + '/' + n1);
+            used[m] = 1;
+            quads++;
+          }, skip);
+      }
+    }
+  }
+
+  var obj = [
+    '# Mazecraft ' + MZ_VERSION + ' — ' + dims[0] + ' x ' + dims[1] + ' x ' + dims[2] + ' blocks',
+    '# seed ' + maze.seed + ', ' + (maze.flat ? 'plane' : 'cube') + ', corridor ' + maze.corridor,
+    'mtllib ' + name + '.mtl',
+    'o ' + name
+  ];
+  obj = obj.concat(V, VT);
+  for (var k = 0; k < OBJ_NORMALS.length; k++) {
+    obj.push('vn ' + OBJ_NORMALS[k][0] + ' ' + OBJ_NORMALS[k][1] + ' ' + OBJ_NORMALS[k][2]);
+  }
+  for (var m2 = 1; m2 <= 4; m2++) {
+    if (!used[m2]) continue;
+    obj.push('g ' + OBJ_MAT_NAMES[m2]);
+    obj.push('usemtl ' + OBJ_MAT_NAMES[m2]);
+    obj = obj.concat(faces[m2]);
+  }
+
+  var mtl = ['# Mazecraft ' + MZ_VERSION];
+  var files = [];
+  for (var m3 = 1; m3 <= 4; m3++) {
+    if (!used[m3]) continue;
+    var def = defs[m3];
+    var T = makeBlockTexture(def);
+    var c = averageColor(T);
+    var mn = OBJ_MAT_NAMES[m3];
+    mtl.push('');
+    mtl.push('newmtl ' + mn);
+    mtl.push('Ka 0.0 0.0 0.0');
+    mtl.push('Kd ' + c[0].toFixed(4) + ' ' + c[1].toFixed(4) + ' ' + c[2].toFixed(4));
+    mtl.push('Ks 0.0 0.0 0.0');
+    mtl.push('Ns 10.0');
+    if (def.em) mtl.push('Ke ' + (c[0] * def.em).toFixed(4) + ' ' + (c[1] * def.em).toFixed(4) + ' ' + (c[2] * def.em).toFixed(4));
+    mtl.push('d ' + (def.translucent ? '0.45' : '1.0'));
+    mtl.push('illum 2');
+    mtl.push('map_Kd ' + mn + '.png');
+    if (def.translucent) mtl.push('map_d ' + mn + '.png');
+    files.push({ name: mn + '.png', data: pngEncode(T.s, T.s, T.d) });
+  }
+
+  files.unshift({ name: name + '.mtl', data: utf8Bytes(mtl.join('\n') + '\n') });
+  files.unshift({ name: name + '.obj', data: utf8Bytes(obj.join('\n') + '\n') });
+
+  return { files: files, quads: quads, vertices: vi - 1 };
 }
 
 
@@ -1887,9 +2105,10 @@ var SLOTS = [
 
 var S = {
   seed: (Math.random() * 1e9) | 0,
-  dim: 37,          // blocks per side — this is what the slider sets
+  dim: 37,          // blocks across X and Z — this is what the slider sets
   cells: 12,        // derived: (dim - 1) / (corridor + 1)
   corridor: 2,
+  flat: false,      // plane mode: one cell layer tall
   braid: 0,
   blocks: {
     1: BLOCK_INDEX.stone_bricks, 2: BLOCK_INDEX.deepslate,
@@ -1991,23 +2210,34 @@ function snapDim(d) {
   return clamp(Math.round((d - 1) / P) * P + 1, r[0], r[1]);
 }
 
+function layers() { return S.flat ? 1 : S.cells; }
+function currentDims() {
+  var P = S.corridor + 1;
+  return [S.dim, layers() * P + 1, S.dim];
+}
+
 function syncSize() {
   var r = dimRange(), sl = $('size');
   sl.min = r[0]; sl.max = r[1]; sl.step = r[2];
   S.dim = snapDim(S.dim);
   sl.value = S.dim;
   S.cells = (S.dim - 1) / r[2];
-  $('dims').textContent = S.dim + ' × ' + S.dim + ' × ' + S.dim + ' blocks';
-  $('sizeOut').textContent = S.cells + '³ cells';
-  var fits = S.dim <= STRUCTURE_LIMIT;
+  var D = currentDims();
+  $('dims').textContent = D[0] + ' × ' + D[1] + ' × ' + D[2] + ' blocks';
+  $('sizeOut').textContent = S.flat
+    ? S.cells + ' × ' + S.cells + ' cells'
+    : S.cells + '³ cells';
+  var fits = D[0] <= STRUCTURE_LIMIT && D[2] <= STRUCTURE_LIMIT && D[1] <= 384;
   $('fits').textContent = fits
-    ? 'fits a structure block (' + STRUCTURE_LIMIT + ' max)'
-    : 'too wide for a structure block — ' + S.dim + ' > ' + STRUCTURE_LIMIT;
+    ? 'fits a structure block (' + STRUCTURE_LIMIT + ' max across)'
+    : 'too wide for a structure block — ' + Math.max(D[0], D[2]) + ' > ' + STRUCTURE_LIMIT;
   $('fits').className = 'sub' + (fits ? '' : ' warn');
   var presets = [19, 31, 43, 61];
   for (var i = 0; i < presets.length; i++) {
     $('p' + presets[i]).classList.toggle('on', S.dim === presets[i]);
   }
+  $('shapeCube').classList.toggle('on', !S.flat);
+  $('shapePlane').classList.toggle('on', S.flat);
 }
 
 /* ---------------- generation ---------------- */
@@ -2024,7 +2254,10 @@ function generate() {
   setProgress(0.02, 'Carving passages…');
 
   setTimeout(function () {
-    S.maze = buildMaze({ cells: S.cells, corridor: S.corridor, seed: S.seed, braid: S.braid });
+    S.maze = buildMaze({
+      cells: S.cells, layers: layers(), corridor: S.corridor,
+      seed: S.seed, braid: S.braid
+    });
     setProgress(0.12, 'Solving…');
     S.sol = solveMaze(S.maze);
     renderer.disposeWorld();
@@ -2038,9 +2271,10 @@ function generate() {
 }
 
 function queueChunks() {
-  var nc = Math.ceil(S.maze.dim / CHUNK);
+  var D = S.maze.dims;
+  var nx = Math.ceil(D[0] / CHUNK), ny = Math.ceil(D[1] / CHUNK), nz = Math.ceil(D[2] / CHUNK);
   var q = [];
-  for (var z = 0; z < nc; z++) for (var y = 0; y < nc; y++) for (var x = 0; x < nc; x++) q.push([x, y, z]);
+  for (var z = 0; z < nz; z++) for (var y = 0; y < ny; y++) for (var x = 0; x < nx; x++) q.push([x, y, z]);
   q.sort(function (a, b) {
     return (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]) - (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
   });
@@ -2060,10 +2294,9 @@ function rebuildGeometry() {
 
 function updateStats() {
   if (!S.sol) return;
-  var dim = S.maze.dim;
   var txt = 'Shortest route: ' + S.sol.length.toLocaleString() + ' blocks';
   if (!S.building) txt += '  ·  ' + S.quads.toLocaleString() + ' merged faces';
-  txt += '  ·  ' + (dim * dim * dim).toLocaleString() + ' blocks total';
+  txt += '  ·  ' + S.maze.blocks.toLocaleString() + ' blocks total';
   $('stats').textContent = txt;
 }
 
@@ -2073,7 +2306,7 @@ function stepBuild(budgetMs) {
   while (S.qi < S.queue.length) {
     var c = S.queue[S.qi++];
     S.quads += renderer.addChunk(c[0], c[1], c[2], CHUNK,
-      buildChunkGeometry(S.maze.grid, S.maze.dim, c[0], c[1], c[2], CHUNK, S.skip));
+      buildChunkGeometry(S.maze.grid, S.maze.dims, c[0], c[1], c[2], CHUNK, S.skip));
     if (performance.now() - t0 > budgetMs) break;
   }
   var frac = 0.12 + 0.88 * (S.qi / S.queue.length);
@@ -2097,7 +2330,7 @@ function teleportToEntrance() {
 
 /* ---------------- Minecraft export ---------------- */
 function structureName() {
-  return 'maze_' + currentDim() + '_' + (S.seed >>> 0);
+  return 'maze_' + (S.flat ? 'plane_' : '') + currentDim() + '_' + (S.seed >>> 0);
 }
 
 function blockIdMap() {
@@ -2112,7 +2345,7 @@ function blockIdMap() {
 function doExport(kind) {
   if (!S.maze || S.building) return;
   var name = structureName();
-  $('exportNote').textContent = 'Writing ' + (S.maze.dim * S.maze.dim * S.maze.dim).toLocaleString() + ' blocks…';
+  $('exportNote').textContent = 'Writing ' + S.maze.blocks.toLocaleString() + ' blocks…';
   setTimeout(function () {
     try {
       var st = buildMcStructure(S.maze, blockIdMap(), { includeShell: S.exportShell });
@@ -2126,6 +2359,24 @@ function doExport(kind) {
       }
     } catch (err) {
       $('exportNote').textContent = 'Export failed: ' + err.message;
+    }
+  }, 20);
+}
+
+function exportOBJ() {
+  if (!S.maze || S.building) return;
+  var name = structureName();
+  $('exportNote').textContent = 'Meshing for OBJ…';
+  setTimeout(function () {
+    try {
+      var defs = { 1: BLOCKS[S.blocks[1]], 2: BLOCKS[S.blocks[2]], 3: BLOCKS[S.blocks[3]], 4: BLOCKS[S.blocks[4]] };
+      var built = buildOBJ(S.maze, defs, S.skip, name);
+      downloadBytes(makeZip(built.files), name + '-obj.zip');
+      $('exportNote').innerHTML = 'Saved <b>' + name + '-obj.zip</b> — ' +
+        built.quads.toLocaleString() + ' quads, ' + built.vertices.toLocaleString() +
+        ' vertices, with the block textures as PNGs.';
+    } catch (err) {
+      $('exportNote').textContent = 'OBJ export failed: ' + err.message;
     }
   }, 20);
 }
@@ -2167,8 +2418,8 @@ function raycastCell(maxDist) {
 function placeTorch() {
   if (!S.torchesOn || !S.maze || S.building) return;
   var c = raycastCell(TORCH_REACH);
-  var d = S.maze.dim;
-  if (c[0] < -2 || c[1] < -2 || c[2] < -2 || c[0] > d + 1 || c[1] > d + 1 || c[2] > d + 1) return;
+  var D = S.maze.dims;
+  for (var ax = 0; ax < 3; ax++) if (c[ax] < -2 || c[ax] > D[ax] + 1) return;
   if (solidAt(c[0], c[1], c[2])) return;
 
   var key = torchKey(c[0], c[1], c[2]);
@@ -2225,9 +2476,9 @@ var RAD = 0.3;
 function solidAt(x, y, z) {
   var m = S.maze;
   if (!m) return false;
-  var d = m.dim;
-  if (x < 0 || y < 0 || z < 0 || x >= d || y >= d || z >= d) return false;
-  var v = m.grid[x + d * (y + d * z)];
+  var D = m.dims;
+  if (x < 0 || y < 0 || z < 0 || x >= D[0] || y >= D[1] || z >= D[2]) return false;
+  var v = m.grid[x + D[0] * (y + D[1] * z)];
   return v !== 0 && !S.ghost[v];
 }
 
@@ -2304,16 +2555,16 @@ var MAP_COL = { 0: [11, 13, 16], 1: [74, 80, 90], 2: [40, 44, 52], 3: [255, 150,
 
 function drawMinimap() {
   if (!S.showMap || !S.maze) return;
-  var m = S.maze, dim = m.dim;
-  if (sliceCv.width !== dim) { sliceCv.width = dim; sliceCv.height = dim; }
-  var y = clamp(Math.floor(S.pos[1]), 0, dim - 1);
-  var img = sliceCtx.createImageData(dim, dim);
+  var m = S.maze, D = m.dims, dim = D[0];
+  if (sliceCv.width !== D[0] || sliceCv.height !== D[2]) { sliceCv.width = D[0]; sliceCv.height = D[2]; }
+  var y = clamp(Math.floor(S.pos[1]), 0, D[1] - 1);
+  var img = sliceCtx.createImageData(D[0], D[2]);
   var d = img.data;
-  for (var z = 0; z < dim; z++) {
-    for (var x = 0; x < dim; x++) {
-      var v = m.grid[x + dim * (y + dim * z)];
+  for (var z = 0; z < D[2]; z++) {
+    for (var x = 0; x < D[0]; x++) {
+      var v = m.grid[x + D[0] * (y + D[1] * z)];
       var c = MAP_COL[S.ghost[v] ? 0 : v] || MAP_COL[1];
-      var i = (z * dim + x) * 4;
+      var i = (z * D[0] + x) * 4;
       d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
     }
   }
@@ -2321,7 +2572,7 @@ function drawMinimap() {
     for (var k = 0; k < S.sol.path.length; k++) {
       var p = S.sol.path[k];
       if (Math.floor(p[1]) !== y) continue;
-      var ii = (Math.floor(p[2]) * dim + Math.floor(p[0])) * 4;
+      var ii = (Math.floor(p[2]) * D[0] + Math.floor(p[0])) * 4;
       d[ii] = 255; d[ii + 1] = 208; d[ii + 2] = 96;
     }
   }
@@ -2329,8 +2580,8 @@ function drawMinimap() {
     var tt = S.torches[ti];
     if (Math.floor(tt[1]) !== y) continue;
     var tx = Math.floor(tt[0]), tz = Math.floor(tt[2]);
-    if (tx < 0 || tz < 0 || tx >= dim || tz >= dim) continue;
-    var tI = (tz * dim + tx) * 4;
+    if (tx < 0 || tz < 0 || tx >= D[0] || tz >= D[2]) continue;
+    var tI = (tz * D[0] + tx) * 4;
     d[tI] = 255; d[tI + 1] = 168; d[tI + 2] = 72;
   }
   sliceCtx.putImageData(img, 0, 0);
@@ -2338,7 +2589,7 @@ function drawMinimap() {
   var W = mapCv.width;
   mapCtx.imageSmoothingEnabled = false;
   mapCtx.clearRect(0, 0, W, W);
-  mapCtx.drawImage(sliceCv, 0, 0, dim, dim, 0, 0, W, W);
+  mapCtx.drawImage(sliceCv, 0, 0, D[0], D[2], 0, 0, W, W);
 
   var sc = W / dim;
   var px = S.pos[0] * sc, pz = S.pos[2] * sc;
@@ -2393,12 +2644,12 @@ function fmtTime(s) {
 
 function updateHUD() {
   if (!S.maze) return;
-  var dim = S.maze.dim;
+  var D = S.maze.dims;
   var bx = Math.floor(S.pos[0]), by = Math.floor(S.pos[1]), bz = Math.floor(S.pos[2]);
   $('hudPos').textContent = bx + ', ' + by + ', ' + bz;
   var dtxt = '—';
-  if (bx >= 0 && by >= 0 && bz >= 0 && bx < dim && by < dim && bz < dim && S.sol) {
-    var dv = S.sol.dist[bx + dim * (by + dim * bz)];
+  if (bx >= 0 && by >= 0 && bz >= 0 && bx < D[0] && by < D[1] && bz < D[2] && S.sol) {
+    var dv = S.sol.dist[bx + D[0] * (by + D[1] * bz)];
     if (dv >= 0) dtxt = dv.toLocaleString() + ' blocks';
   }
   $('hudDist').textContent = dtxt;
@@ -2423,9 +2674,10 @@ var env = {
    distance shift smoothly as you pass through a doorway */
 function insideFactor() {
   if (!S.maze) return 0;
-  var d = S.maze.dim, depth = 1e9;
-  for (var i = 0; i < 3; i++) depth = Math.min(depth, S.pos[i], d - S.pos[i]);
-  return clamp(depth / 7, 0, 1);
+  var D = S.maze.dims, depth = 1e9;
+  for (var i = 0; i < 3; i++) depth = Math.min(depth, S.pos[i], D[i] - S.pos[i]);
+  /* a flat maze is only a few blocks tall, so judge it by its footprint */
+  return clamp(depth / (S.maze.flat ? 2.5 : 7), 0, 1);
 }
 
 function frame(now) {
@@ -2461,7 +2713,7 @@ function frame(now) {
   if (S.maze) {
     if (!S.entered && S.pos[0] > 1.0) { S.entered = true; S.t0 = S.time; }
     if (S.entered && !S.won) S.elapsed = S.time - S.t0;
-    if (S.entered && !S.won && S.pos[0] > S.maze.dim + 0.4) {
+    if (S.entered && !S.won && S.pos[0] > S.maze.dims[0] + 0.4) {
       S.won = true;
       $('banner').style.display = 'block';
       $('banner').innerHTML = 'You found the way out<em>' + fmtTime(S.elapsed) +
@@ -2470,7 +2722,7 @@ function frame(now) {
   }
 
   var inside = insideFactor();
-  var openFar = S.maze ? S.maze.dim * 3.0 : 200;
+  var openFar = S.maze ? Math.max(S.maze.dims[0], S.maze.dims[2]) * 3.0 : 200;
   env.ambient = S.ambient * lerp(3.4, 1, inside);
   env.torchRange = S.torch;
   env.fogFar = lerp(Math.max(S.fogFar, openFar), S.fogFar, inside);
@@ -2490,7 +2742,8 @@ function frame(now) {
   env.cullDistance = (inside >= 1 && !renderer.anyTranslucent()) ? env.fogFar + 20 : 1e9;
 
   var aspect = renderer.resize(canvas.clientWidth, canvas.clientHeight, Math.min(window.devicePixelRatio || 1, 2));
-  m4perspective(renderer.proj, 1.28, aspect, 0.05, Math.max(400, S.maze ? S.maze.dim * 3 : 400));
+  m4perspective(renderer.proj, 1.28, aspect, 0.05,
+    Math.max(400, S.maze ? Math.max(S.maze.dims[0], S.maze.dims[1], S.maze.dims[2]) * 3 : 400));
   m4view(renderer.view, S.pos, camR, camU, camF);
   renderer.render({ pos: S.pos }, env);
 
@@ -2542,6 +2795,8 @@ function corrUI() {
 }
 $('corr1').onclick = function () { S.corridor = 1; corrUI(); };
 $('corr2').onclick = function () { S.corridor = 2; corrUI(); };
+$('shapeCube').onclick = function () { S.flat = false; syncSize(); };
+$('shapePlane').onclick = function () { S.flat = true; syncSize(); };
 
 bindRange('braid', 'braidOut', function () { return S.braid; }, function (v) { S.braid = v; },
   function (v) { return v === 0 ? 'none (one route)' : Math.round(v * 100) + '% dead ends looped'; });
@@ -2569,6 +2824,7 @@ $('respawn').onclick = function () { teleportToEntrance(); };
 $('shot').onclick = function () { S.shot = true; };
 $('expStructure').onclick = function () { doExport('structure'); };
 $('expPack').onclick = function () { doExport('pack'); };
+$('expObj').onclick = function () { exportOBJ(); };
 
 /* ---------------- boot ---------------- */
 $('ver').textContent = 'v' + MZ_VERSION;
