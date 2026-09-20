@@ -64,6 +64,7 @@
   .seg{display:flex;gap:6px}
   .seg .btn{flex:1;text-align:center}
   .seg .btn.on{background:#28313d;border-color:#4b566a;color:#fff}
+  .btn.sz{font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
 
   .dims{font-size:12px;color:var(--text);font-family:ui-monospace,Menlo,monospace;
     font-variant-numeric:tabular-nums}
@@ -205,11 +206,17 @@
       <button class="btn" id="corr1">1 block</button>
       <button class="btn" id="corr2">2 blocks</button>
     </div>
-    <div class="row"><label for="cells">Size</label><span class="val" id="cellsOut"></span></div>
-    <input type="range" id="cells" min="4" max="34" step="1">
+    <div class="row"><label for="size">Cube size</label><span class="val" id="sizeOut"></span></div>
+    <input type="range" id="size" min="13" max="103" step="3">
     <div class="dims" id="dims">37 × 37 × 37 blocks</div>
     <div class="sub" id="fits"></div>
-    <div class="sub">one entrance, one exit, diagonally opposite</div>
+    <div class="seg" style="margin-top:8px">
+      <button class="btn sz" id="p19">19</button>
+      <button class="btn sz" id="p31">31</button>
+      <button class="btn sz" id="p43">43</button>
+      <button class="btn sz" id="p61">61</button>
+    </div>
+    <div class="sub">blocks per side · one entrance, one exit, diagonally opposite</div>
     <div class="row" style="margin-top:12px"><label for="braid">Loops</label><span class="val" id="braidOut"></span></div>
     <input type="range" id="braid" min="0" max="0.35" step="0.01">
     <button class="btn primary" id="generate" style="width:100%;margin-top:12px">Build the maze</button>
@@ -262,7 +269,7 @@
 /* ============================================================
    Mazecraft — core math / rng
    ============================================================ */
-var MZ_VERSION = '1.1.0';
+var MZ_VERSION = '1.1.1';
 
 function mulberry32(a) {
   a = a | 0;
@@ -1739,7 +1746,8 @@ var SLOTS = [
 
 var S = {
   seed: (Math.random() * 1e9) | 0,
-  cells: 12,
+  dim: 37,          // blocks per side — this is what the slider sets
+  cells: 12,        // derived: (dim - 1) / (corridor + 1)
   corridor: 2,
   braid: 0,
   blocks: {
@@ -1810,26 +1818,38 @@ function buildPalette() {
   markPalette();
 }
 
-/* ---------------- sizing ---------------- */
-function cellRange() {
-  return S.corridor === 2 ? [4, 34] : [6, 50];
+/* ---------------- sizing ----------------
+   The slider is in BLOCKS, which is the number that matters.
+   A cell costs (corridor + 1) blocks and the far wall adds one more,
+   so the legal sizes are pitch*n + 1 — the slider steps by the pitch,
+   which makes every position it can reach a legal size.              */
+function dimRange() {
+  return S.corridor === 2 ? [13, 103, 3] : [9, 101, 2];
 }
-function currentDim() { return S.cells * (S.corridor + 1) + 1; }
+function currentDim() { return S.dim; }
+
+function snapDim(d) {
+  var r = dimRange(), P = r[2];
+  return clamp(Math.round((d - 1) / P) * P + 1, r[0], r[1]);
+}
 
 function syncSize() {
-  var r = cellRange();
-  var sl = $('cells');
-  sl.min = r[0]; sl.max = r[1];
-  S.cells = clamp(S.cells, r[0], r[1]);
-  sl.value = S.cells;
-  var dim = currentDim();
-  $('dims').textContent = dim + ' × ' + dim + ' × ' + dim + ' blocks';
-  $('cellsOut').textContent = S.cells + '³ cells';
-  var fits = dim <= STRUCTURE_LIMIT;
+  var r = dimRange(), sl = $('size');
+  sl.min = r[0]; sl.max = r[1]; sl.step = r[2];
+  S.dim = snapDim(S.dim);
+  sl.value = S.dim;
+  S.cells = (S.dim - 1) / r[2];
+  $('dims').textContent = S.dim + ' × ' + S.dim + ' × ' + S.dim + ' blocks';
+  $('sizeOut').textContent = S.cells + '³ cells';
+  var fits = S.dim <= STRUCTURE_LIMIT;
   $('fits').textContent = fits
     ? 'fits a structure block (' + STRUCTURE_LIMIT + ' max)'
-    : 'too wide for a structure block — ' + dim + ' > ' + STRUCTURE_LIMIT;
+    : 'too wide for a structure block — ' + S.dim + ' > ' + STRUCTURE_LIMIT;
   $('fits').className = 'sub' + (fits ? '' : ' warn');
+  var presets = [19, 31, 43, 61];
+  for (var i = 0; i < presets.length; i++) {
+    $('p' + presets[i]).classList.toggle('on', S.dim === presets[i]);
+  }
 }
 
 /* ---------------- generation ---------------- */
@@ -2226,7 +2246,10 @@ $('reseed').onclick = function () {
   $('seed').value = S.seed;
   generate();
 };
-$('cells').addEventListener('input', function () { S.cells = parseInt(this.value, 10); syncSize(); });
+$('size').addEventListener('input', function () { S.dim = parseInt(this.value, 10); syncSize(); });
+[19, 31, 43, 61].forEach(function (n) {
+  $('p' + n).onclick = function () { S.dim = n; syncSize(); };
+});
 function corrUI() {
   $('corr1').classList.toggle('on', S.corridor === 1);
   $('corr2').classList.toggle('on', S.corridor === 2);
