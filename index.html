@@ -269,7 +269,7 @@
 /* ============================================================
    Mazecraft — core math / rng
    ============================================================ */
-var MZ_VERSION = '1.1.1';
+var MZ_VERSION = '1.2.0';
 
 function mulberry32(a) {
   a = a | 0;
@@ -594,8 +594,16 @@ function pat_glass(T, d, rnd) {
   T.set(11, 10, frame[0], frame[1], frame[2], core + 90);
 }
 
+/* nothing at all — drawn only as a palette swatch, never as geometry */
+function pat_air(T, d, rnd) {
+  for (var y = 0; y < 16; y++) for (var x = 0; x < 16; x++) {
+    var on = ((x >> 2) + (y >> 2)) & 1;
+    T.set(x, y, on ? 74 : 44, on ? 82 : 50, on ? 96 : 60, on ? 70 : 34);
+  }
+}
+
 var PATTERNS = {
-  brick: pat_brick, cobble: pat_cobble, planks: pat_planks, rough: pat_rough,
+  air: pat_air, brick: pat_brick, cobble: pat_cobble, planks: pat_planks, rough: pat_rough,
   smooth: pat_smooth, sand: pat_sand, crystal: pat_crystal, glow: pat_glow,
   ice: pat_ice, glass: pat_glass
 };
@@ -606,6 +614,7 @@ var PATTERNS = {
    alpha        uniform opacity multiplier (1 = fully from the texture)
    translucent  draw in the blended pass instead of the opaque one      */
 var BLOCKS = [
+  { key: 'air', name: 'Air — leave it empty', mc: 'minecraft:air', pattern: 'air', base: [0, 0, 0], isAir: true },
   { key: 'stone_bricks', name: 'Stone Bricks', mc: 'minecraft:stone_bricks', pattern: 'brick', base: [128, 128, 122], mortar: [92, 92, 88], bw: 8, bh: 8, offset: false },
   { key: 'mossy_bricks', name: 'Mossy Stone Bricks', mc: 'minecraft:mossy_stone_bricks', pattern: 'brick', base: [118, 128, 108], mortar: [78, 92, 72], bw: 8, bh: 8, offset: false, moss: true },
   { key: 'cracked_bricks', name: 'Cracked Stone Bricks', mc: 'minecraft:cracked_stone_bricks', pattern: 'brick', base: [122, 120, 114], mortar: [80, 78, 74], bw: 8, bh: 8, offset: false, crack: true },
@@ -666,6 +675,7 @@ var BLOCK_INDEX = {};
     if (b.em === undefined) b.em = 0;
     if (b.alpha === undefined) b.alpha = 1;
     if (b.translucent === undefined) b.translucent = false;
+    if (b.isAir === undefined) b.isAir = false;
     BLOCK_INDEX[b.key] = i;
   }
 })();
@@ -927,14 +937,18 @@ var AXIS_V = [2, 0, 1];
     ui,vj: quad origin along axes AXIS_U[d] / AXIS_V[d]
     w,h  : quad extent along u / v
 */
-function meshChunk(grid, dim, ox, oy, oz, cs, emitQuad) {
+function meshChunk(grid, dim, ox, oy, oz, cs, emitQuad, skip) {
   var mask = new Int32Array(cs * cs);
   var pos = [0, 0, 0], nb = [0, 0, 0];
   var origin = [ox, oy, oz];
 
+  /* a material listed in skip is treated as if it were air, so choosing
+     Air for a slot removes those blocks from the world entirely rather
+     than drawing them invisible */
   function at(x, y, z) {
     if (x < 0 || y < 0 || z < 0 || x >= dim || y >= dim || z >= dim) return 0;
-    return grid[x + dim * (y + dim * z)];
+    var m = grid[x + dim * (y + dim * z)];
+    return (skip && skip[m]) ? 0 : m;
   }
 
   for (var d = 0; d < 3; d++) {
@@ -1001,7 +1015,7 @@ function faceUV(d, x, y, z, out) {
    grouped by material and split so index buffers stay 16-bit safe. */
 var VERT_LIMIT = 65532;
 
-function buildChunkGeometry(grid, dim, cx, cy, cz, cs) {
+function buildChunkGeometry(grid, dim, cx, cy, cz, cs, skip) {
   var groups = {};          // mat -> { batches:[], P:[], I:[], v:0 }
   var uv = [0, 0];
 
@@ -1036,7 +1050,7 @@ function buildChunkGeometry(grid, dim, cx, cy, cz, cs) {
     var b = g.v;
     g.I.push(b, b + 1, b + 2, b, b + 2, b + 3);
     g.v += 4;
-  });
+  }, skip);
 
   var out = [];
   for (var m in groups) {
@@ -1762,6 +1776,8 @@ var S = {
   keys: {}, locked: false,
   speed: 9, torch: 15, ambient: 0.22, fogFar: 34, beacon: 1.0, sens: 0.0022,
   showPath: false, showMap: true, noclip: false, exportShell: true,
+  ghost: { 1: false, 2: false, 3: false, 4: false },   // slots set to Air
+  skip: [0, 0, 0, 0, 0],
   entered: false, won: false, t0: 0, elapsed: 0,
   time: 0, shot: false, fps: 0
 };
@@ -1809,13 +1825,27 @@ function buildPalette() {
     b.title = def.name;
     b.appendChild(swatchCanvas(def, 30));
     b.onclick = function () {
-      S.blocks[S.activeSlot] = i;
-      renderer.setBlockTexture(S.activeSlot, def);
+      var slot = S.activeSlot;
+      var wasAir = S.ghost[slot];
+      S.blocks[slot] = i;
+      renderer.setBlockTexture(slot, def);
+      syncGhosts();
       buildSlotChips(); markPalette();
+      /* air changes what exists, not just how it looks, so the mesh must go */
+      if (wasAir !== S.ghost[slot] && S.maze && !S.building) rebuildGeometry();
     };
     host.appendChild(b);
   });
   markPalette();
+}
+
+function syncGhosts() {
+  S.skip = [0, 0, 0, 0, 0];
+  for (var m = 1; m <= 4; m++) {
+    var air = !!BLOCKS[S.blocks[m]].isAir;
+    S.ghost[m] = air;
+    S.skip[m] = air ? 1 : 0;
+  }
 }
 
 /* ---------------- sizing ----------------
@@ -1872,17 +1902,30 @@ function generate() {
     renderer.disposeWorld();
     renderer.setPath(S.sol.path);
 
-    var dim = S.maze.dim;
-    var nc = Math.ceil(dim / CHUNK);
-    var q = [];
-    for (var z = 0; z < nc; z++) for (var y = 0; y < nc; y++) for (var x = 0; x < nc; x++) q.push([x, y, z]);
-    q.sort(function (a, b) {
-      return (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]) - (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
-    });
-    S.queue = q; S.qi = 0; S.quads = 0;
+    queueChunks();
     teleportToEntrance();
     updateStats();
   }, 30);
+}
+
+function queueChunks() {
+  var nc = Math.ceil(S.maze.dim / CHUNK);
+  var q = [];
+  for (var z = 0; z < nc; z++) for (var y = 0; y < nc; y++) for (var x = 0; x < nc; x++) q.push([x, y, z]);
+  q.sort(function (a, b) {
+    return (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]) - (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
+  });
+  S.queue = q; S.qi = 0; S.quads = 0;
+  S.building = true;
+}
+
+/* re-mesh the existing maze without regenerating or moving the player */
+function rebuildGeometry() {
+  if (!S.maze) return;
+  renderer.disposeWorld();
+  renderer.setPath(S.sol.path);
+  queueChunks();
+  setProgress(0.12, 'Rebuilding geometry…');
 }
 
 function updateStats() {
@@ -1900,7 +1943,7 @@ function stepBuild(budgetMs) {
   while (S.qi < S.queue.length) {
     var c = S.queue[S.qi++];
     S.quads += renderer.addChunk(c[0], c[1], c[2], CHUNK,
-      buildChunkGeometry(S.maze.grid, S.maze.dim, c[0], c[1], c[2], CHUNK));
+      buildChunkGeometry(S.maze.grid, S.maze.dim, c[0], c[1], c[2], CHUNK, S.skip));
     if (performance.now() - t0 > budgetMs) break;
   }
   var frac = 0.12 + 0.88 * (S.qi / S.queue.length);
@@ -1964,7 +2007,8 @@ function solidAt(x, y, z) {
   if (!m) return false;
   var d = m.dim;
   if (x < 0 || y < 0 || z < 0 || x >= d || y >= d || z >= d) return false;
-  return m.grid[x + d * (y + d * z)] !== 0;
+  var v = m.grid[x + d * (y + d * z)];
+  return v !== 0 && !S.ghost[v];
 }
 
 function overlaps(p) {
@@ -2041,7 +2085,8 @@ function drawMinimap() {
   var d = img.data;
   for (var z = 0; z < dim; z++) {
     for (var x = 0; x < dim; x++) {
-      var c = MAP_COL[m.grid[x + dim * (y + dim * z)]] || MAP_COL[1];
+      var v = m.grid[x + dim * (y + dim * z)];
+      var c = MAP_COL[S.ghost[v] ? 0 : v] || MAP_COL[1];
       var i = (z * dim + x) * 4;
       d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
     }
@@ -2287,6 +2332,7 @@ buildPalette();
 corrUI();
 applyMap();
 for (var s = 1; s <= 4; s++) renderer.setBlockTexture(s, BLOCKS[S.blocks[s]]);
+syncGhosts();
 generate();
 requestAnimationFrame(frame);
 
